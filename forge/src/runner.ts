@@ -12,6 +12,7 @@ export interface RunOptions {
   targetDir: string;
   dryRun?: boolean;
   resumeRunId?: string;
+  coder?: string;
 }
 
 export async function runForge(opts: RunOptions): Promise<{ runId: string; plan: Plan }> {
@@ -38,7 +39,7 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
         `  → type=${classification.projectType}, complexity=${classification.complexity}, files≈${classification.estFiles}, ambig=${classification.ambiguityScore}`
       )
     );
-    plan = buildPlan(opts.prompt, classification, ctx);
+    plan = buildPlan(opts.prompt, classification, ctx, { coder: opts.coder });
     writePlan(runId, plan);
     saveCheckpoint(runId, "00-plan", plan);
   }

@@ -1,6 +1,10 @@
 import { Classification, Plan, PlanNode, RunContext } from "../types.js";
 import { annotateRouting } from "./router.js";
 
+export interface PlanOverrides {
+  coder?: string; // override the impl phase to a specific model id
+}
+
 const DOC_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
 const CODE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
 const RUN_TOOLS = ["Read", "Glob", "Grep", "Bash"];
@@ -8,7 +12,8 @@ const RUN_TOOLS = ["Read", "Glob", "Grep", "Bash"];
 export function buildPlan(
   prompt: string,
   classification: Classification,
-  ctx: RunContext
+  ctx: RunContext,
+  overrides: PlanOverrides = {}
 ): Plan {
   const nodes: PlanNode[] = [
     {
@@ -67,11 +72,16 @@ export function buildPlan(
     },
   ];
 
+  const routed = annotateRouting(nodes, classification);
+  if (overrides.coder) {
+    for (const n of routed) if (n.phase === "impl") n.modelId = overrides.coder;
+  }
+
   return {
     runId: ctx.runId,
     createdAt: new Date().toISOString(),
     prompt,
     classification,
-    nodes: annotateRouting(nodes, classification),
+    nodes: routed,
   };
 }

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { getAdapter } from "../cli-adapters/index.js";
 import { getModel } from "../models/registry.js";
-import { CliResult, ModelMeta } from "../types.js";
+import { CliResult } from "../types.js";
 import { resolveBin, spawnArgs } from "../util/resolve-bin.js";
 
 export interface RunCliOpts {
@@ -14,52 +15,31 @@ export interface RunCliOpts {
 
 export async function runCli(opts: RunCliOpts): Promise<CliResult> {
   const model = getModel(opts.modelId);
-  if (model.cli === "claude") return runClaude(model, opts);
-  if (model.cli === "codex") return runCodex(model, opts);
-  throw new Error(`Unsupported CLI: ${model.cli}`);
-}
+  const adapter = getAdapter(model.cli);
 
-function runClaude(model: ModelMeta, opts: RunCliOpts): Promise<CliResult> {
-  const args: string[] = [
-    "-p",
-    opts.prompt,
-    "--model",
-    model.cliModelFlag,
-    "--output-format",
-    "json",
-    "--permission-mode",
-    "acceptEdits",
-  ];
-  if (opts.allowedTools && opts.allowedTools.length > 0) {
-    args.push("--allowedTools", opts.allowedTools.join(","));
-  }
-  return spawnCli("claude", args, opts);
-}
+  const translatedTools = adapter.translateTools
+    ? adapter.translateTools(opts.allowedTools ?? [])
+    : opts.allowedTools;
 
-function runCodex(model: ModelMeta, opts: RunCliOpts): Promise<CliResult> {
-  const args: string[] = [
-    "exec",
-    "--model",
-    model.cliModelFlag,
-    "--cd",
-    opts.cwd,
-    "--full-auto",
-    opts.prompt,
-  ];
-  return spawnCli("codex", args, opts);
-}
+  const args = adapter.buildArgs({
+    prompt: opts.prompt,
+    cwd: opts.cwd,
+    modelFlag: model.cliModelFlag || adapter.defaultModelFlag || "",
+    allowedTools: translatedTools,
+    timeoutMs: opts.timeoutMs,
+    onLine: opts.onLine,
+  });
 
-async function spawnCli(bin: string, args: string[], opts: RunCliOpts): Promise<CliResult> {
   const started = Date.now();
-  const resolved = await resolveBin(bin);
+  const resolved = await resolveBin(adapter.binName);
   if (!resolved) {
     return {
       ok: false,
       stdout: "",
-      stderr: `${bin} not found on PATH`,
+      stderr: `${adapter.binName} not found on PATH`,
       exitCode: -1,
       durationMs: 0,
-      finalText: `${bin} CLI is not installed or not on PATH`,
+      finalText: `${adapter.binName} CLI is not installed or not on PATH`,
     };
   }
 
@@ -77,10 +57,7 @@ async function spawnCli(bin: string, args: string[], opts: RunCliOpts): Promise<
     });
 
     const timer = opts.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          child.kill("SIGTERM");
-        }, opts.timeoutMs)
+      ? setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, opts.timeoutMs)
       : null;
 
     child.stdout?.on("data", (d: Buffer) => {
@@ -88,15 +65,13 @@ async function spawnCli(bin: string, args: string[], opts: RunCliOpts): Promise<
       stdout += chunk;
       if (opts.onLine) for (const line of chunk.split("\n")) if (line.trim()) opts.onLine(line);
     });
-    child.stderr?.on("data", (d: Buffer) => {
-      stderr += d.toString();
-    });
+    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
 
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
       const durationMs = Date.now() - started;
       const exitCode = code ?? -1;
-      const parsed = parseClaudeJson(stdout);
+      const parsed = adapter.parseOutput(stdout);
       resolve({
         ok: exitCode === 0 && !timedOut,
         stdout,
@@ -122,25 +97,4 @@ async function spawnCli(bin: string, args: string[], opts: RunCliOpts): Promise<
       });
     });
   });
-}
-
-function parseClaudeJson(stdout: string): {
-  costUsd?: number;
-  tokensIn?: number;
-  tokensOut?: number;
-  finalText?: string;
-} {
-  try {
-    const trimmed = stdout.trim();
-    if (!trimmed.startsWith("{")) return {};
-    const obj = JSON.parse(trimmed);
-    return {
-      costUsd: obj.total_cost_usd ?? obj.cost_usd,
-      tokensIn: obj.usage?.input_tokens,
-      tokensOut: obj.usage?.output_tokens,
-      finalText: obj.result ?? obj.text,
-    };
-  } catch {
-    return {};
-  }
 }

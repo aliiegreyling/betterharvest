@@ -6,6 +6,7 @@ import { runForge } from "./runner.js";
 import { MODELS } from "./models/registry.js";
 import { readAudit, readPlan, listRuns } from "./run/state.js";
 import { checkCli } from "./util/check-cli.js";
+import { listAdapters } from "./cli-adapters/index.js";
 
 const program = new Command();
 program.name("forge").description("Agentic CLI that builds projects via Claude Code & Codex CLIs").version("0.2.0");
@@ -15,14 +16,16 @@ program
   .description("Build a new project from a prompt")
   .argument("<prompt>", "natural-language description of the project to build")
   .option("--target-dir <dir>", "where to write the generated project", "./forge-out")
+  .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
   .option("--dry-run", "print plan without executing", false)
   .option("--skip-doctor", "skip CLI availability check", false)
-  .action(async (prompt: string, opts: { targetDir: string; dryRun: boolean; skipDoctor: boolean }) => {
+  .action(async (prompt: string, opts: { targetDir: string; coder?: string; dryRun: boolean; skipDoctor: boolean }) => {
     if (!opts.skipDoctor) await doctor();
     try {
       await runForge({
         prompt,
         targetDir: path.resolve(opts.targetDir),
+        coder: opts.coder,
         dryRun: opts.dryRun,
       });
     } catch (e) {
@@ -36,9 +39,10 @@ program
   .description("Print routing plan for a prompt without executing")
   .argument("<prompt>")
   .option("--target-dir <dir>", "intended project dir", "./forge-out")
-  .action(async (prompt: string, opts: { targetDir: string }) => {
+  .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
+  .action(async (prompt: string, opts: { targetDir: string; coder?: string }) => {
     await doctor();
-    await runForge({ prompt, targetDir: path.resolve(opts.targetDir), dryRun: true });
+    await runForge({ prompt, targetDir: path.resolve(opts.targetDir), coder: opts.coder, dryRun: true });
   });
 
 program
@@ -129,15 +133,22 @@ program
   });
 
 async function doctor(verbose = false) {
-  const claude = await checkCli("claude", ["--version"]);
-  const codex = await checkCli("codex", ["--version"]);
-  if (verbose || !claude.ok) {
-    console.log(`  claude CLI: ${claude.ok ? chalk.green("✓ " + claude.version) : chalk.red("✗ not found")}`);
-  }
+  const adapters = listAdapters();
+  const results = await Promise.all(adapters.map(async (a) => ({ a, r: await checkCli(a.binName) })));
+  const claudeRes = results.find((x) => x.a.name === "claude")?.r;
+
   if (verbose) {
-    console.log(`  codex  CLI: ${codex.ok ? chalk.green("✓ " + codex.version) : chalk.yellow("✗ not found (optional)")}`);
+    for (const { a, r } of results) {
+      const tag = a.name === "claude" ? "required" : "optional";
+      console.log(
+        `  ${a.binName.padEnd(8)} CLI (${tag}): ${r.ok ? chalk.green("✓ " + r.version) : (a.name === "claude" ? chalk.red("✗ not found") : chalk.yellow("✗ not found"))}`
+      );
+    }
+  } else if (!claudeRes?.ok) {
+    console.log(`  claude CLI: ${chalk.red("✗ not found")}`);
   }
-  if (!claude.ok) {
+
+  if (!claudeRes?.ok) {
     console.error(chalk.red("\nclaude CLI is required. Install Claude Code: https://claude.com/claude-code"));
     process.exit(1);
   }
