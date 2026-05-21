@@ -1,0 +1,129 @@
+{
+  "runId": "2026-05-21T14-44-50-735Z-n4lotp",
+  "createdAt": "2026-05-21T14:45:11.613Z",
+  "prompt": "build a time tracker app called ConnorTime it must have a start time and stop time button for different entries and logs",
+  "classification": {
+    "projectType": "Time Tracking Web Application",
+    "complexity": "M",
+    "estFiles": 8,
+    "requiresUi": true,
+    "stackHint": "React/TypeScript web app with localStorage or database persistence",
+    "ambiguityScore": 0.42,
+    "summary": "Time tracker app (ConnorTime) with start/stop buttons for multiple time entries, state management for tracking sessions, and persistent logging of all entries"
+  },
+  "nodes": [
+    {
+      "id": "n_brief",
+      "phase": "brief",
+      "role": "Product Manager",
+      "modelId": "sonnet",
+      "goal": "Write a concise brief: problem, user, scope, non-goals, success criteria.",
+      "inputs": [],
+      "allowedTools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ]
+    },
+    {
+      "id": "n_arch",
+      "phase": "arch",
+      "role": "Architect",
+      "modelId": "opus",
+      "goal": "Define stack, components, file layout, key interfaces. Output architecture doc.",
+      "inputs": [
+        "n_brief"
+      ],
+      "allowedTools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ]
+    },
+    {
+      "id": "n_stories",
+      "phase": "stories",
+      "role": "Story Decomposer",
+      "modelId": "sonnet",
+      "goal": "Decompose architecture into an ordered story list of small, verifiable changes.",
+      "inputs": [
+        "n_arch"
+      ],
+      "allowedTools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ]
+    },
+    {
+      "id": "n_impl",
+      "phase": "impl",
+      "role": "Developer",
+      "modelId": "sonnet",
+      "goal": "Implement all stories. The project must be runnable end-to-end with a smoke test.",
+      "inputs": [
+        "n_stories"
+      ],
+      "allowedTools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep",
+        "Bash"
+      ]
+    },
+    {
+      "id": "n_verify",
+      "phase": "verify",
+      "role": "Verifier",
+      "modelId": "sonnet",
+      "goal": "Independently run the project / smoke test. Report exit status without modifying code.",
+      "inputs": [
+        "n_impl"
+      ],
+      "allowedTools": [
+        "Read",
+        "Glob",
+        "Grep",
+        "Bash"
+      ]
+    },
+    {
+      "id": "n_review",
+      "phase": "review",
+      "role": "Reviewer",
+      "modelId": "sonnet",
+      "goal": "Ensure README.md exists with run instructions. Flag obvious gaps.",
+      "inputs": [
+        "n_verify"
+      ],
+      "allowedTools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Glob",
+        "Grep"
+      ]
+    }
+  ],
+  "contextBudget": "standard",
+  "projectContext": {
+    "cwd": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\forge",
+    "projectRoot": "C:/Users/ConnorCress/source/McConf2026/betterharvest",
+    "gitRoot": "C:/Users/ConnorCress/source/McConf2026/betterharvest",
+    "branch": "main",
+    "hasBmad": true,
+    "hasSerena": true,
+    "hasForge": true,
+    "bmadPlanningDir": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\_bmad-output\\planning-artifacts",
+    "serenaProjectFile": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\.serena\\project.yml",
+    "packageManager": "npm"
+  }
+}
