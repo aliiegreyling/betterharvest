@@ -5,6 +5,7 @@ export interface InvokeOpts {
   cwd: string;
   modelFlag: string;
   allowedTools?: string[];
+  chatOnly?: boolean;
   timeoutMs?: number;
   onLine?: (line: string) => void;
 }

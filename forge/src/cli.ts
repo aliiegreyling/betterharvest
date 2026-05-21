@@ -10,9 +10,17 @@ import { listAdapters } from "./cli-adapters/index.js";
 import { detectProjectContext, formatProjectContext } from "./project/context.js";
 import { checkMcpHealth, discoverMcpServers } from "./mcp/registry.js";
 import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "./project/commands.js";
+import { startChat } from "./chat/session.js";
 
 const program = new Command();
 program.name("forge").description("Agentic CLI that builds projects via Claude Code & Codex CLIs").version("0.3.0");
+
+program
+  .command("chat", { isDefault: true })
+  .description("Start the chat-first Forge harness with slash commands")
+  .action(async () => {
+    await startChat();
+  });
 
 program
   .command("new")

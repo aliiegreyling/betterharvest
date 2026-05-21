@@ -18,3 +18,4 @@ Use Serena MCP for codebase traversal when available. If it is unavailable, say 
 
 Keep `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and `.github/copilot-instructions.md` aligned when agentic workflow conventions change.
 
+Forge should be treated as chat-first. `forge` and `forge chat` open the harness; plain text chats with the selected model, while slash commands such as `/request`, `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context` start operational BMAD/MCP flows.

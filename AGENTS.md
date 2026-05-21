@@ -36,6 +36,8 @@ GitHub and Azure DevOps may be in play. Use MCP connectors and CLI tools where a
 
 Keep agent guidance current as the system evolves. Update `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and `.github/copilot-instructions.md` when framework decisions, architecture standards, or product workflow conventions change.
 
+Forge is now a chat-first harness. Running `forge` or `forge chat` opens an interactive session where plain text chats with the selected model and slash commands invoke operations. Use `/request` to capture a project idea without spending model tokens, then `/plan`, `/new`, `/design`, `/work`, `/mcp`, or `/context` to drive the relevant BMAD/MCP workflow.
+
 ## Engineering Standards
 
 Treat this as a .NET and TypeScript product workspace unless future planning chooses otherwise. Favor clean, scalable development and pragmatic platform choices across Azure, Resend, Descope, Neon, and related integration services.
@@ -51,4 +53,3 @@ Use BMad Builder when we need custom agents, workflows, or modules:
 - `bmad-agent-builder` for custom persona agents.
 - `bmad-workflow-builder` for repeatable workflows.
 - `bmad-module-builder` for packaging a reusable module.
-

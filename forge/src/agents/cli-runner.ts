@@ -9,6 +9,7 @@ export interface RunCliOpts {
   prompt: string;
   cwd: string;
   allowedTools?: string[];
+  chatOnly?: boolean;
   timeoutMs?: number;
   onLine?: (line: string) => void;
 }
@@ -26,6 +27,7 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
     cwd: opts.cwd,
     modelFlag: model.cliModelFlag || adapter.defaultModelFlag || "",
     allowedTools: translatedTools,
+    chatOnly: opts.chatOnly,
     timeoutMs: opts.timeoutMs,
     onLine: opts.onLine,
   });
@@ -53,6 +55,7 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
       ...s.options,
       cwd: opts.cwd,
       env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
 

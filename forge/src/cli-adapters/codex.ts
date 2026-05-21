@@ -13,15 +13,16 @@ export const codexAdapter: CliAdapter = {
   },
 
   buildArgs(opts) {
-    return [
+    const args = [
       "exec",
       "--model",
       opts.modelFlag,
       "--cd",
       opts.cwd,
-      "--full-auto",
-      opts.prompt,
     ];
+    if (!opts.chatOnly) args.push("--full-auto");
+    args.push(opts.prompt);
+    return args;
   },
 
   parseOutput(stdout) {

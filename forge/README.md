@@ -1,6 +1,6 @@
 # forge
 
-Headless agentic CLI that builds or maintains projects from a prompt with BMAD-aware planning context, MCP discovery, and dynamic routing across Claude Code and OpenAI Codex CLI adapters.
+Chat-first agentic CLI that builds or maintains projects from a prompt with BMAD-aware planning context, MCP discovery, and dynamic routing across Claude Code and OpenAI Codex CLI adapters.
 
 Forge shells out to CLIs you are already authenticated with. It does not require application API keys in its own configuration.
 
@@ -21,7 +21,33 @@ npm link
 
 `npm link` is optional. Without it, run commands with `node dist/cli.js`.
 
-## Usage
+## Chat Usage
+
+Run Forge with no subcommand, or explicitly run `chat`, to start the interactive harness:
+
+```bash
+node dist/cli.js
+node dist/cli.js chat
+```
+
+Plain text chats directly with the selected model, using compact project context and no edit/shell tool permissions. Slash commands invoke operational journeys:
+
+```text
+/help
+/set model sonnet
+/request build a CLI todo in Python with SQLite
+/plan --bmad
+/new --target-dir ../todo --coder codex
+/design data "todo domain model"
+/work "add authentication to the existing app"
+/mcp health
+```
+
+Use `/request <text>` to capture a project idea without spending model tokens. Use plain text or `/ask <message>` when you want a model response.
+
+## Script Usage
+
+Existing subcommands remain available for scripts and CI:
 
 ```bash
 node dist/cli.js doctor
@@ -55,11 +81,14 @@ node dist/cli.js new "build a CLI todo app" --coder codex --context-budget deep 
 
 ## How It Works
 
-1. **Classifier** runs Claude Haiku to tag the prompt with project type, complexity, estimated files, ambiguity, stack hints, and UI requirements.
-2. **Orchestrator** builds a 6-phase plan: brief, architecture, stories, implementation, verification, and review.
-3. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-verification overrides and `--coder` for implementation-only overrides.
-4. **CLI adapters** invoke Claude Code or Codex with phase-scoped tool permissions and the target directory as the working directory.
-5. **Audit and checkpoints** write run metadata under `~/.forge/runs/<id>/`.
+1. **Chat shell** opens by default and keeps a short conversation history plus the latest captured project request.
+2. **Direct chat** sends plain text to the selected model with compact project context and no tool permissions.
+3. **Slash commands** dispatch project journeys such as `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context`.
+4. **Classifier** runs Claude Haiku for `/plan` and `/new` to tag the prompt with project type, complexity, estimated files, ambiguity, stack hints, and UI requirements.
+5. **Orchestrator** builds a 6-phase plan: brief, architecture, stories, implementation, verification, and review.
+6. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-verification overrides and `--coder` for implementation-only overrides.
+7. **CLI adapters** invoke Claude Code or Codex with phase-scoped tool permissions and the target directory as the working directory.
+8. **Audit and checkpoints** write run metadata under `~/.forge/runs/<id>/`.
 
 ## BMAD, Serena, and MCP
 

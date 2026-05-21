@@ -13,3 +13,4 @@ BMAD skills are installed in `.agents/skills/`, and Copilot agent entrypoints ar
 
 Write durable planning artifacts to `_bmad-output/planning-artifacts/`, implementation artifacts to `_bmad-output/implementation-artifacts/`, and research/project knowledge to `docs/`.
 
+Forge runs as a chat-first CLI harness. Plain text in `forge`/`forge chat` talks to the selected model, while slash commands such as `/request`, `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context` drive project workflows.

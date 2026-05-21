@@ -100,6 +100,17 @@ Implemented first foundation slice:
 - Added BMAD-compatible plan artifact writing for plan runs.
 - Preserved existing Forge greenfield execution flow.
 
+### v0.3 Chat-First Interaction Progress
+
+Forge now starts as an interactive chat harness when run without a subcommand or with `forge chat`.
+
+- Plain text routes to the selected model for direct conversation with compact project context.
+- `/request <text>` captures a project idea without invoking a model.
+- `/plan` and `/new` can use the captured request or an inline prompt.
+- Slash commands expose the existing operations: `/status`, `/context`, `/mcp`, `/inspect`, `/design`, `/work`, `/models`, `/runs`, `/log`, `/cost`, and `/resume`.
+- Chat defaults can be changed with `/set target-dir`, `/set model`, `/set coder`, `/set context-budget`, `/set bmad`, and `/set skip-doctor`.
+- Existing Commander subcommands remain available for scripts and CI.
+
 Still pending:
 
 - Live MCP client execution and tool discovery.

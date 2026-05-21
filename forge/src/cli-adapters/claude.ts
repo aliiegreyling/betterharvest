@@ -26,9 +26,10 @@ export const claudeAdapter: CliAdapter = {
       opts.modelFlag,
       "--output-format",
       "json",
-      "--permission-mode",
-      "acceptEdits",
     ];
+    if (!opts.chatOnly && opts.allowedTools && opts.allowedTools.length > 0) {
+      args.push("--permission-mode", "acceptEdits");
+    }
     if (opts.allowedTools && opts.allowedTools.length > 0) {
       args.push("--allowedTools", opts.allowedTools.join(","));
     }
