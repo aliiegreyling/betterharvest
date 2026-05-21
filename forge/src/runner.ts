@@ -10,7 +10,6 @@ import { appendAudit, ensureRunDir, newRunId, saveCheckpoint, writePlan, readPla
 export interface RunOptions {
   prompt: string;
   targetDir: string;
-  budgetUsd: number;
   dryRun?: boolean;
   resumeRunId?: string;
 }
@@ -21,24 +20,18 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
   const targetDir = path.resolve(opts.targetDir);
   fs.mkdirSync(targetDir, { recursive: true });
 
-  const ctx: RunContext = {
-    runId,
-    runDir: runDirPath,
-    targetDir,
-    budgetUsd: opts.budgetUsd,
-    spentUsd: 0,
-  };
+  const ctx: RunContext = { runId, runDir: runDirPath, targetDir, estCostUsd: 0 };
 
   console.log(chalk.bold(`\nforge run ${runId}`));
   console.log(chalk.dim(`  target: ${targetDir}`));
-  console.log(chalk.dim(`  budget: $${opts.budgetUsd.toFixed(2)}`));
+  console.log(chalk.dim(`  run dir: ${runDirPath}`));
 
   let plan: Plan;
   if (opts.resumeRunId) {
     plan = readPlan(runId);
     console.log(chalk.dim(`  resumed from existing plan`));
   } else {
-    console.log(chalk.cyan(`\n[1/7] Classifying prompt (model: haiku)`));
+    console.log(chalk.cyan(`\n[1/7] Classifying prompt (claude --model haiku)`));
     const classification = await classify(opts.prompt, ctx);
     console.log(
       chalk.dim(
@@ -53,31 +46,23 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
   if (opts.dryRun) {
     console.log(chalk.yellow("\nDry run — plan only:"));
     for (const n of plan.nodes) {
-      console.log(`  ${n.phase.padEnd(8)} ${n.modelId.padEnd(7)} $${n.budgetUsd.toFixed(2)}  ${n.goal}`);
+      console.log(`  ${n.phase.padEnd(8)} ${n.modelId.padEnd(7)}  ${n.goal}`);
     }
     return { runId, plan };
   }
 
-  const phases: Array<{ name: string; idx: number; fn: typeof runBrief; checkpoint: string }> = [
-    { name: "Brief", idx: 2, fn: runBrief, checkpoint: "01-brief" },
-    { name: "Architecture", idx: 3, fn: runArch, checkpoint: "02-arch" },
-    { name: "Stories", idx: 4, fn: runStories, checkpoint: "03-stories" },
-    { name: "Implementation", idx: 5, fn: runImpl, checkpoint: "04-impl" },
-    { name: "Verify", idx: 6, fn: runVerify, checkpoint: "05-verify" },
-    { name: "Review", idx: 7, fn: runReview, checkpoint: "06-review" },
+  const phases: Array<{ name: string; idx: number; phase: Plan["nodes"][number]["phase"]; fn: typeof runBrief; checkpoint: string }> = [
+    { name: "Brief",          idx: 2, phase: "brief",   fn: runBrief,   checkpoint: "01-brief" },
+    { name: "Architecture",   idx: 3, phase: "arch",    fn: runArch,    checkpoint: "02-arch" },
+    { name: "Stories",        idx: 4, phase: "stories", fn: runStories, checkpoint: "03-stories" },
+    { name: "Implementation", idx: 5, phase: "impl",    fn: runImpl,    checkpoint: "04-impl" },
+    { name: "Verify",         idx: 6, phase: "verify",  fn: runVerify,  checkpoint: "05-verify" },
+    { name: "Review",         idx: 7, phase: "review",  fn: runReview,  checkpoint: "06-review" },
   ];
 
   for (const ph of phases) {
-    const node = plan.nodes.find((n) =>
-      ph.name === "Brief" ? n.phase === "brief" :
-      ph.name === "Architecture" ? n.phase === "arch" :
-      ph.name === "Stories" ? n.phase === "stories" :
-      ph.name === "Implementation" ? n.phase === "impl" :
-      ph.name === "Verify" ? n.phase === "verify" : n.phase === "review"
-    )!;
-    console.log(
-      chalk.cyan(`\n[${ph.idx}/7] ${ph.name} (model: ${node.modelId}, budget: $${node.budgetUsd.toFixed(2)})`)
-    );
+    const node = plan.nodes.find((n) => n.phase === ph.phase)!;
+    console.log(chalk.cyan(`\n[${ph.idx}/7] ${ph.name} (claude --model ${node.modelId})`));
     appendAudit(runId, { kind: "phase_start", nodeId: node.id, modelId: node.modelId });
     const r = await ph.fn(ctx, plan);
     appendAudit(runId, {
@@ -87,15 +72,14 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
       costUsd: r.costUsd,
       message: r.output.slice(0, 500),
     });
-    saveCheckpoint(runId, ph.checkpoint, { ok: r.ok, modelUsed: r.modelUsed, steps: r.steps, output: r.output });
+    saveCheckpoint(runId, ph.checkpoint, { ok: r.ok, modelUsed: r.modelUsed, durationMs: r.durationMs, output: r.output });
     console.log(
       r.ok
-        ? chalk.green(`  ✓ ${ph.name} ok (${r.steps} steps, $${r.costUsd.toFixed(3)})`)
-        : chalk.red(`  ✗ ${ph.name} failed (${r.steps} steps, $${r.costUsd.toFixed(3)})`)
+        ? chalk.green(`  ✓ ${ph.name} ok in ${(r.durationMs / 1000).toFixed(1)}s${r.costUsd ? ` ($${r.costUsd.toFixed(4)})` : ""}`)
+        : chalk.red(`  ✗ ${ph.name} failed in ${(r.durationMs / 1000).toFixed(1)}s — ${r.output.slice(0, 200)}`)
     );
-    console.log(chalk.dim(`  spent so far: $${ctx.spentUsd.toFixed(3)} / $${ctx.budgetUsd.toFixed(2)}`));
     if (!r.ok && ph.name !== "Verify") {
-      console.log(chalk.red(`\nAborting run: ${ph.name} did not complete successfully.`));
+      console.log(chalk.red(`\nAborting run: ${ph.name} did not complete.`));
       break;
     }
   }
@@ -103,5 +87,6 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
   console.log(chalk.bold(`\nDone. Run id: ${runId}`));
   console.log(chalk.dim(`  audit: ${path.join(runDirPath, "audit.jsonl")}`));
   console.log(chalk.dim(`  project: ${targetDir}`));
+  console.log(chalk.dim(`  est. cost: $${ctx.estCostUsd.toFixed(4)} (from claude CLI JSON output)`));
   return { runId, plan };
 }

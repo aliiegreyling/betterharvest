@@ -1,13 +1,15 @@
 import { Classification, Plan, PlanNode, RunContext } from "../types.js";
 import { annotateRouting } from "./router.js";
 
+const DOC_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep"];
+const CODE_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"];
+const RUN_TOOLS = ["Read", "Glob", "Grep", "Bash"];
+
 export function buildPlan(
   prompt: string,
   classification: Classification,
   ctx: RunContext
 ): Plan {
-  const phaseBudgets = allocateBudget(ctx.budgetUsd, classification);
-
   const nodes: PlanNode[] = [
     {
       id: "n_brief",
@@ -16,58 +18,52 @@ export function buildPlan(
       modelId: "",
       goal: "Write a concise brief: problem, user, scope, non-goals, success criteria.",
       inputs: [],
-      budgetUsd: phaseBudgets.brief,
-      tools: ["write_file"],
+      allowedTools: DOC_TOOLS,
     },
     {
       id: "n_arch",
       phase: "arch",
       role: "Architect",
       modelId: "",
-      goal: "Define stack, components, file layout, key interfaces. Output an architecture doc.",
+      goal: "Define stack, components, file layout, key interfaces. Output architecture doc.",
       inputs: ["n_brief"],
-      budgetUsd: phaseBudgets.arch,
-      tools: ["write_file", "read_file"],
+      allowedTools: DOC_TOOLS,
     },
     {
       id: "n_stories",
       phase: "stories",
       role: "Story Decomposer",
       modelId: "",
-      goal: "Decompose architecture into an ordered story list. Each story is a small, verifiable code change.",
+      goal: "Decompose architecture into an ordered story list of small, verifiable changes.",
       inputs: ["n_arch"],
-      budgetUsd: phaseBudgets.stories,
-      tools: ["write_file", "read_file"],
+      allowedTools: DOC_TOOLS,
     },
     {
       id: "n_impl",
       phase: "impl",
       role: "Developer",
       modelId: "",
-      goal: "Implement all stories. Create source files, config, and a runnable smoke test. The project must run end-to-end.",
+      goal: "Implement all stories. The project must be runnable end-to-end with a smoke test.",
       inputs: ["n_stories"],
-      budgetUsd: phaseBudgets.impl,
-      tools: ["read_file", "write_file", "edit_file", "list_files", "shell"],
+      allowedTools: CODE_TOOLS,
     },
     {
       id: "n_verify",
       phase: "verify",
       role: "Verifier",
       modelId: "",
-      goal: "Run the smoke test or main entry point. Report whether the project executes successfully.",
+      goal: "Independently run the project / smoke test. Report exit status without modifying code.",
       inputs: ["n_impl"],
-      budgetUsd: phaseBudgets.verify,
-      tools: ["read_file", "list_files", "shell"],
+      allowedTools: RUN_TOOLS,
     },
     {
       id: "n_review",
       phase: "review",
       role: "Reviewer",
       modelId: "",
-      goal: "Final pass: ensure a README exists with run instructions; flag obvious gaps.",
+      goal: "Ensure README.md exists with run instructions. Flag obvious gaps.",
       inputs: ["n_verify"],
-      budgetUsd: phaseBudgets.review,
-      tools: ["read_file", "write_file", "edit_file", "list_files"],
+      allowedTools: DOC_TOOLS,
     },
   ];
 
@@ -77,24 +73,5 @@ export function buildPlan(
     prompt,
     classification,
     nodes: annotateRouting(nodes, classification),
-    totalBudgetUsd: ctx.budgetUsd,
   };
-}
-
-function allocateBudget(total: number, c: Classification): Record<string, number> {
-  const weights: Record<string, number> = {
-    brief: 0.05,
-    arch: 0.15,
-    stories: 0.08,
-    impl: 0.55,
-    verify: 0.10,
-    review: 0.07,
-  };
-  if (c.complexity === "XL") {
-    weights.arch = 0.20;
-    weights.impl = 0.50;
-  }
-  const out: Record<string, number> = {};
-  for (const [k, w] of Object.entries(weights)) out[k] = +(total * w).toFixed(4);
-  return out;
 }

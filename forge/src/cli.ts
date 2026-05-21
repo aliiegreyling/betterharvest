@@ -5,23 +5,24 @@ import path from "node:path";
 import { runForge } from "./runner.js";
 import { MODELS } from "./models/registry.js";
 import { readAudit, readPlan, listRuns } from "./run/state.js";
+import { checkCli } from "./util/check-cli.js";
 
 const program = new Command();
-program.name("forge").description("Agentic CLI that builds projects from a prompt").version("0.1.0");
+program.name("forge").description("Agentic CLI that builds projects via Claude Code & Codex CLIs").version("0.2.0");
 
 program
   .command("new")
   .description("Build a new project from a prompt")
   .argument("<prompt>", "natural-language description of the project to build")
   .option("--target-dir <dir>", "where to write the generated project", "./forge-out")
-  .option("--budget <usd>", "max total cost in USD", "3.00")
   .option("--dry-run", "print plan without executing", false)
-  .action(async (prompt: string, opts: { targetDir: string; budget: string; dryRun: boolean }) => {
+  .option("--skip-doctor", "skip CLI availability check", false)
+  .action(async (prompt: string, opts: { targetDir: string; dryRun: boolean; skipDoctor: boolean }) => {
+    if (!opts.skipDoctor) await doctor();
     try {
       await runForge({
         prompt,
         targetDir: path.resolve(opts.targetDir),
-        budgetUsd: parseFloat(opts.budget),
         dryRun: opts.dryRun,
       });
     } catch (e) {
@@ -32,17 +33,12 @@ program
 
 program
   .command("plan")
-  .description("Print the routing plan for a prompt without executing")
+  .description("Print routing plan for a prompt without executing")
   .argument("<prompt>")
-  .option("--target-dir <dir>", "where the project would be written", "./forge-out")
-  .option("--budget <usd>", "max total cost in USD", "3.00")
-  .action(async (prompt: string, opts: { targetDir: string; budget: string }) => {
-    await runForge({
-      prompt,
-      targetDir: path.resolve(opts.targetDir),
-      budgetUsd: parseFloat(opts.budget),
-      dryRun: true,
-    });
+  .option("--target-dir <dir>", "intended project dir", "./forge-out")
+  .action(async (prompt: string, opts: { targetDir: string }) => {
+    await doctor();
+    await runForge({ prompt, targetDir: path.resolve(opts.targetDir), dryRun: true });
   });
 
 program
@@ -50,15 +46,15 @@ program
   .description("Resume a run from its last checkpoint")
   .argument("<run-id>")
   .option("--target-dir <dir>", "project dir", "./forge-out")
-  .option("--budget <usd>", "max total cost in USD", "3.00")
-  .action(async (runId: string, opts: { targetDir: string; budget: string }) => {
-    await runForge({
-      prompt: "",
-      targetDir: path.resolve(opts.targetDir),
-      budgetUsd: parseFloat(opts.budget),
-      resumeRunId: runId,
-    });
+  .action(async (runId: string, opts: { targetDir: string }) => {
+    await doctor();
+    await runForge({ prompt: "", targetDir: path.resolve(opts.targetDir), resumeRunId: runId });
   });
+
+program
+  .command("doctor")
+  .description("Check that required CLIs (claude, codex) are available")
+  .action(async () => { await doctor(true); });
 
 program
   .command("models")
@@ -66,9 +62,8 @@ program
   .action(() => {
     console.log(chalk.bold("Model registry:"));
     for (const m of MODELS) {
-      console.log(
-        `  ${m.id.padEnd(7)} ${m.apiId.padEnd(30)} in=$${m.costPer1MIn}/Mtok  out=$${m.costPer1MOut}/Mtok  strengths=${m.strengths.join(",")}`
-      );
+      console.log(`  ${m.id.padEnd(7)} cli=${m.cli.padEnd(7)} flag=${m.cliModelFlag.padEnd(16)} strengths=${m.strengths.join(",")}`);
+      if (m.notes) console.log(chalk.dim(`           ${m.notes}`));
     }
   });
 
@@ -86,7 +81,8 @@ program
     for (const e of events) {
       const cost = e.costUsd ? ` $${e.costUsd.toFixed(4)}` : "";
       const toks = e.tokensIn ? ` in=${e.tokensIn} out=${e.tokensOut}` : "";
-      console.log(`${e.ts} [${e.kind}] ${e.nodeId ?? ""} ${e.modelId ?? e.tool ?? ""}${toks}${cost} ${e.message ?? ""}`);
+      const dur = e.durationMs ? ` ${(e.durationMs / 1000).toFixed(1)}s` : "";
+      console.log(`${e.ts} [${e.kind}] ${e.nodeId ?? ""} ${e.modelId ?? ""}${dur}${toks}${cost} ${e.message ?? ""}`);
     }
   });
 
@@ -99,7 +95,7 @@ program
     const byModel = new Map<string, { cost: number; calls: number; in: number; out: number }>();
     let total = 0;
     for (const e of events) {
-      if (e.kind !== "model_call" || !e.modelId) continue;
+      if (e.kind !== "cli_call" || !e.modelId) continue;
       const cur = byModel.get(e.modelId) ?? { cost: 0, calls: 0, in: 0, out: 0 };
       cur.cost += e.costUsd ?? 0;
       cur.calls += 1;
@@ -108,11 +104,12 @@ program
       byModel.set(e.modelId, cur);
       total += e.costUsd ?? 0;
     }
-    console.log(chalk.bold(`Cost for run ${runId}:`));
+    console.log(chalk.bold(`Cost for run ${runId} (from CLI-reported usage):`));
     for (const [m, v] of byModel) {
       console.log(`  ${m.padEnd(7)} calls=${v.calls}  in=${v.in}  out=${v.out}  $${v.cost.toFixed(4)}`);
     }
     console.log(chalk.bold(`  TOTAL: $${total.toFixed(4)}`));
+    console.log(chalk.dim(`  (Codex CLI typically does not report cost — those calls show $0.)`));
   });
 
 program
@@ -130,5 +127,20 @@ program
       }
     }
   });
+
+async function doctor(verbose = false) {
+  const claude = await checkCli("claude", ["--version"]);
+  const codex = await checkCli("codex", ["--version"]);
+  if (verbose || !claude.ok) {
+    console.log(`  claude CLI: ${claude.ok ? chalk.green("✓ " + claude.version) : chalk.red("✗ not found")}`);
+  }
+  if (verbose) {
+    console.log(`  codex  CLI: ${codex.ok ? chalk.green("✓ " + codex.version) : chalk.yellow("✗ not found (optional)")}`);
+  }
+  if (!claude.ok) {
+    console.error(chalk.red("\nclaude CLI is required. Install Claude Code: https://claude.com/claude-code"));
+    process.exit(1);
+  }
+}
 
 program.parseAsync(process.argv);

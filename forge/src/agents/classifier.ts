@@ -1,9 +1,8 @@
-import { callModel } from "../models/client.js";
 import { appendAudit } from "../run/state.js";
 import { Classification, RunContext } from "../types.js";
+import { runCli } from "./cli-runner.js";
 
-const SYSTEM = `You classify software project prompts into structured metadata for an agentic build system.
-Output ONLY valid JSON matching this schema, no prose:
+const INSTRUCTION = `You are a project classifier. Read the user's project prompt and output ONLY a JSON object on stdout matching this exact schema, with no prose, no markdown:
 {
   "projectType": string,
   "complexity": "S" | "M" | "L" | "XL",
@@ -13,32 +12,41 @@ Output ONLY valid JSON matching this schema, no prose:
   "ambiguityScore": number,
   "summary": string
 }
-Complexity guide:
-- S: single file, <50 lines, no deps
-- M: 2-10 files, light deps (CRUD CLI, small script)
-- L: 10-30 files, framework, persistence
-- XL: 30+ files, multi-service, complex domain
-ambiguityScore: 0.0 (crystal clear) to 1.0 (heavily underspecified).`;
+Complexity guide: S = <50 lines single file. M = 2-10 files small app. L = 10-30 files framework + persistence. XL = 30+ files multi-service.
+ambiguityScore is 0.0 (crystal clear) to 1.0 (heavily underspecified).
+Output the JSON only.`;
 
 export async function classify(prompt: string, ctx: RunContext): Promise<Classification> {
-  const res = await callModel("haiku", {
-    system: SYSTEM,
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0,
-    maxTokens: 800,
+  const fullPrompt = `${INSTRUCTION}\n\nUSER PROMPT:\n"""${prompt}"""`;
+  const res = await runCli({
+    modelId: "haiku",
+    prompt: fullPrompt,
+    cwd: ctx.runDir,
+    allowedTools: [],
+    timeoutMs: 90_000,
   });
 
   appendAudit(ctx.runId, {
-    kind: "model_call",
+    kind: "cli_call",
     agent: "classifier",
     modelId: "haiku",
+    cli: "claude",
+    durationMs: res.durationMs,
+    exitCode: res.exitCode,
+    costUsd: res.costUsd,
     tokensIn: res.tokensIn,
     tokensOut: res.tokensOut,
-    costUsd: res.costUsd,
+    ok: res.ok,
   });
 
-  const json = extractJson(res.text);
-  return json as Classification;
+  if (!res.ok) {
+    throw new Error(
+      `Classifier CLI failed (exit ${res.exitCode}): ${res.stderr.slice(-500)}`
+    );
+  }
+  if (res.costUsd) ctx.estCostUsd += res.costUsd;
+
+  return extractJson(res.finalText) as Classification;
 }
 
 export function extractJson(text: string): unknown {
@@ -46,6 +54,6 @@ export function extractJson(text: string): unknown {
   const candidate = fenced ? fenced[1] : text;
   const start = candidate.indexOf("{");
   const end = candidate.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("No JSON object found in model output");
+  if (start === -1 || end === -1) throw new Error(`No JSON found in classifier output: ${text.slice(0, 300)}`);
   return JSON.parse(candidate.slice(start, end + 1));
 }

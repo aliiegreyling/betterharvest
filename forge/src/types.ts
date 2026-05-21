@@ -17,15 +17,15 @@ export type Strength =
   | "review"
   | "long-context";
 
+export type CliKind = "claude" | "codex";
+
 export interface ModelMeta {
   id: string;
-  provider: "anthropic";
-  apiId: string;
-  contextWindow: number;
-  costPer1MIn: number;
-  costPer1MOut: number;
+  cli: CliKind;
+  cliModelFlag: string;
   strengths: Strength[];
   latencyClass: "fast" | "medium" | "slow";
+  notes?: string;
 }
 
 export interface Classification {
@@ -45,8 +45,7 @@ export interface PlanNode {
   modelId: string;
   goal: string;
   inputs: string[];
-  budgetUsd: number;
-  tools: ToolName[];
+  allowedTools: string[];
 }
 
 export interface Plan {
@@ -55,10 +54,7 @@ export interface Plan {
   prompt: string;
   classification: Classification;
   nodes: PlanNode[];
-  totalBudgetUsd: number;
 }
-
-export type ToolName = "read_file" | "write_file" | "edit_file" | "list_files" | "shell";
 
 export interface AuditEvent {
   ts: string;
@@ -66,43 +62,32 @@ export interface AuditEvent {
   nodeId?: string;
   agent?: string;
   modelId?: string;
-  kind: "model_call" | "tool_call" | "phase_start" | "phase_end" | "error" | "info";
+  cli?: CliKind;
+  kind: "cli_call" | "phase_start" | "phase_end" | "error" | "info";
+  durationMs?: number;
+  exitCode?: number;
+  costUsd?: number;
   tokensIn?: number;
   tokensOut?: number;
-  costUsd?: number;
-  tool?: string;
   ok?: boolean;
   message?: string;
-  data?: unknown;
 }
 
-export interface CompletionRequest {
-  system: string;
-  messages: { role: "user" | "assistant"; content: string }[];
-  maxTokens?: number;
-  temperature?: number;
-  tools?: ToolSchema[];
-}
-
-export interface ToolSchema {
-  name: ToolName;
-  description: string;
-  input_schema: Record<string, unknown>;
-}
-
-export interface CompletionResponse {
-  text: string;
-  toolUses: { id: string; name: string; input: Record<string, unknown> }[];
-  stopReason: string;
-  tokensIn: number;
-  tokensOut: number;
-  costUsd: number;
+export interface CliResult {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+  costUsd?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  finalText: string;
 }
 
 export interface RunContext {
   runId: string;
   runDir: string;
   targetDir: string;
-  budgetUsd: number;
-  spentUsd: number;
+  estCostUsd: number;
 }
