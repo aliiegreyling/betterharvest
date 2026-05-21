@@ -1,14 +1,14 @@
 # forge
 
-Headless agentic CLI that builds projects from a single prompt — **no API keys**. Forge orchestrates SDLC phases and shells out to the `claude` (Claude Code) and `codex` (OpenAI Codex CLI) binaries you're already logged into. Per-phase **dynamic model routing** across Haiku / Sonnet / Opus / Codex.
+Headless agentic CLI that builds or maintains projects from a prompt with BMAD-aware planning context, MCP discovery, and dynamic routing across Claude Code and OpenAI Codex CLI adapters.
+
+Forge shells out to CLIs you are already authenticated with. It does not require application API keys in its own configuration.
 
 ## Prerequisites
 
 - Node 20+
 - [Claude Code](https://claude.com/claude-code) installed and authenticated (`claude --version` works)
-- Optional: [OpenAI Codex CLI](https://github.com/openai/codex) for Codex-routed phases (`codex --version` works)
-
-No `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needed in forge itself — auth comes from the CLIs you already use.
+- Optional: OpenAI Codex CLI for Codex-routed phases (`codex --version` works)
 
 ## Install
 
@@ -16,50 +16,78 @@ No `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needed in forge itself — auth comes
 cd forge
 npm install
 npm run build
+npm link
 ```
+
+`npm link` is optional. Without it, run commands with `node dist/cli.js`.
 
 ## Usage
 
 ```bash
-node dist/cli.js doctor                          # verify CLIs are installed
-node dist/cli.js models                          # list model registry
-node dist/cli.js plan "build a CLI todo in Python"   # dry-run, print plan only
-node dist/cli.js new  "build a CLI todo in Python" --target-dir ../forge-out
-node dist/cli.js log  <run-id>                   # audit log
-node dist/cli.js cost <run-id>                   # per-model cost (when CLI reports it)
-node dist/cli.js runs                            # recent runs
+node dist/cli.js doctor
+node dist/cli.js models
+node dist/cli.js plan "build a CLI todo in Python"
+node dist/cli.js new "build a CLI todo in Python" --target-dir ../forge-out
+node dist/cli.js log <run-id>
+node dist/cli.js cost <run-id>
+node dist/cli.js runs
 node dist/cli.js resume <run-id> --target-dir ../forge-out
 ```
 
-## How it works
+Context and planning commands:
 
-1. **Classifier** (`claude -p --model haiku --output-format json`) tags the prompt with project type, complexity, estimated files, ambiguity.
-2. **Orchestrator** builds a 6-phase plan: brief → arch → stories → impl → verify → review. Each phase node is routed to a model by a deterministic policy (with overrides for complexity/ambiguity).
-3. **Sub-agent runner** shells the chosen CLI with phase-scoped `--allowedTools` and the target directory as cwd. Claude Code runs its own native tool loop inside.
-4. **Escalation:** if a phase fails (non-zero exit), the runner retries with the next model up the ladder (haiku → sonnet → opus). Impl phase has escalation enabled by default.
-5. **Audit:** every CLI call writes a JSONL event to `~/.forge/runs/<id>/audit.jsonl` with duration, exit code, and (when reported by the CLI) tokens + USD cost.
+```bash
+node dist/cli.js status
+node dist/cli.js context refresh
+node dist/cli.js mcp list
+node dist/cli.js mcp health
+node dist/cli.js inspect "auth flow"
+node dist/cli.js design data "domain model"
+node dist/cli.js work "add feature X"
+```
 
-See [the SDLC plan](../_bmad-output/planning-artifacts/agentic-build-system-plan.md) for the full architecture.
+Useful routing flags:
 
-## Routing policy (v0.2)
+```bash
+node dist/cli.js plan "build a CLI todo app" --model sonnet --context-budget low --bmad --skip-doctor
+node dist/cli.js new "build a CLI todo app" --coder codex --context-budget deep --bmad
+```
+
+## How It Works
+
+1. **Classifier** runs Claude Haiku to tag the prompt with project type, complexity, estimated files, ambiguity, stack hints, and UI requirements.
+2. **Orchestrator** builds a 6-phase plan: brief, architecture, stories, implementation, verification, and review.
+3. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-verification overrides and `--coder` for implementation-only overrides.
+4. **CLI adapters** invoke Claude Code or Codex with phase-scoped tool permissions and the target directory as the working directory.
+5. **Audit and checkpoints** write run metadata under `~/.forge/runs/<id>/`.
+
+## BMAD, Serena, and MCP
+
+Forge detects repository context and surfaces BMAD, Serena, MCP, and package-manager readiness without loading large project state into the model.
+
+- BMAD planning artifacts can be emitted under `_bmad-output/planning-artifacts/` with `--bmad`, `context refresh`, `design`, and `work`.
+- Serena is auto-detected from `.serena/project.yml` and `.serena/serena.sh`.
+- MCP support currently covers registry discovery and health checks from `forge.mcp.json`, `.forge/mcp.json`, `.mcp.json`, and Serena auto-detection.
+- Live MCP tool execution is planned as the next integration layer.
+
+## Routing Policy
 
 | Phase | Default | Notes |
-|---|---|---|
-| classify | haiku | always |
-| brief | sonnet | → haiku if complexity=S; → opus if ambiguity > 0.7 |
-| arch | opus | → opus regardless |
-| stories | sonnet | → haiku if complexity=S |
-| impl | sonnet | → opus if complexity=XL; escalates on failure |
-| verify | sonnet | |
-| review | sonnet | |
+| --- | --- | --- |
+| classify | haiku | Always classifier-owned |
+| brief | sonnet | Uses haiku for small scopes; opus for high ambiguity |
+| arch | opus | Architecture-heavy by default |
+| stories | sonnet | Uses haiku for small scopes |
+| impl | sonnet | Uses opus for XL complexity; can be overridden with `--coder` |
+| verify | sonnet | Verification ignores broad `--model` overrides |
+| review | sonnet | Final review and documentation pass |
 
-Override the plan by editing `~/.forge/runs/<id>/plan.json` and re-running with `resume`.
-
-## Run artifacts
+## Run Artifacts
 
 Each run writes to `~/.forge/runs/<id>/`:
-- `plan.json` — the routing plan
-- `audit.jsonl` — append-only event log
-- `checkpoints/*.json` — per-phase results
 
-The generated project lands in `--target-dir`.
+- `plan.json` contains the routing plan.
+- `audit.jsonl` is the append-only event log.
+- `checkpoints/*.json` contains per-phase results.
+
+Generated projects land in `--target-dir`.

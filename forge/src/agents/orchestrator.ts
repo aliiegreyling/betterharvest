@@ -72,7 +72,7 @@ export function buildPlan(
     },
   ];
 
-  const routed = annotateRouting(nodes, classification);
+  const routed = annotateRouting(nodes, classification, ctx.modelOverride);
   if (overrides.coder) {
     for (const n of routed) if (n.phase === "impl") n.modelId = overrides.coder;
   }
@@ -83,5 +83,8 @@ export function buildPlan(
     prompt,
     classification,
     nodes: routed,
+    contextBudget: ctx.contextBudget,
+    modelOverride: ctx.modelOverride,
+    projectContext: ctx.projectContext,
   };
 }

@@ -3,13 +3,16 @@ import { Command } from "commander";
 import chalk from "chalk";
 import path from "node:path";
 import { runForge } from "./runner.js";
-import { MODELS } from "./models/registry.js";
+import { getModel, MODELS } from "./models/registry.js";
 import { readAudit, readPlan, listRuns } from "./run/state.js";
 import { checkCli } from "./util/check-cli.js";
 import { listAdapters } from "./cli-adapters/index.js";
+import { detectProjectContext, formatProjectContext } from "./project/context.js";
+import { checkMcpHealth, discoverMcpServers } from "./mcp/registry.js";
+import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "./project/commands.js";
 
 const program = new Command();
-program.name("forge").description("Agentic CLI that builds projects via Claude Code & Codex CLIs").version("0.2.0");
+program.name("forge").description("Agentic CLI that builds projects via Claude Code & Codex CLIs").version("0.3.0");
 
 program
   .command("new")
@@ -17,16 +20,27 @@ program
   .argument("<prompt>", "natural-language description of the project to build")
   .option("--target-dir <dir>", "where to write the generated project", "./forge-out")
   .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
+  .option("--model <id>", "override model for non-verification phases")
+  .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
+  .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
   .option("--dry-run", "print plan without executing", false)
   .option("--skip-doctor", "skip CLI availability check", false)
-  .action(async (prompt: string, opts: { targetDir: string; coder?: string; dryRun: boolean; skipDoctor: boolean }) => {
+  .action(async (
+    prompt: string,
+    opts: { targetDir: string; coder?: string; model?: string; contextBudget: string; bmad: boolean; dryRun: boolean; skipDoctor: boolean }
+  ) => {
     if (!opts.skipDoctor) await doctor();
     try {
+      validateModel(opts.model);
+      validateModel(opts.coder);
       await runForge({
         prompt,
         targetDir: path.resolve(opts.targetDir),
         coder: opts.coder,
         dryRun: opts.dryRun,
+        modelOverride: opts.model,
+        contextBudget: parseContextBudget(opts.contextBudget),
+        bmadOutput: opts.bmad,
       });
     } catch (e) {
       console.error(chalk.red("Run failed:"), (e as Error).message);
@@ -40,9 +54,26 @@ program
   .argument("<prompt>")
   .option("--target-dir <dir>", "intended project dir", "./forge-out")
   .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
-  .action(async (prompt: string, opts: { targetDir: string; coder?: string }) => {
-    await doctor();
-    await runForge({ prompt, targetDir: path.resolve(opts.targetDir), coder: opts.coder, dryRun: true });
+  .option("--model <id>", "override model for non-verification phases")
+  .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
+  .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
+  .option("--skip-doctor", "skip CLI availability check", false)
+  .action(async (
+    prompt: string,
+    opts: { targetDir: string; coder?: string; model?: string; contextBudget: string; bmad: boolean; skipDoctor: boolean }
+  ) => {
+    if (!opts.skipDoctor) await doctor();
+    validateModel(opts.model);
+    validateModel(opts.coder);
+    await runForge({
+      prompt,
+      targetDir: path.resolve(opts.targetDir),
+      coder: opts.coder,
+      dryRun: true,
+      modelOverride: opts.model,
+      contextBudget: parseContextBudget(opts.contextBudget),
+      bmadOutput: opts.bmad,
+    });
   });
 
 program
@@ -59,6 +90,95 @@ program
   .command("doctor")
   .description("Check that required CLIs (claude, codex) are available")
   .action(async () => { await doctor(true); });
+
+program
+  .command("status")
+  .description("Show project, BMAD, Serena, MCP, and Forge context")
+  .action(() => {
+    console.log(buildStatusText());
+  });
+
+program
+  .command("context")
+  .description("Manage Forge context artifacts")
+  .argument("[action]", "show|refresh", "show")
+  .action((action: string) => {
+    if (action === "refresh") {
+      const file = refreshContext();
+      console.log(chalk.green(`Context artifact written: ${file}`));
+      return;
+    }
+    console.log(buildStatusText());
+  });
+
+const mcp = program.command("mcp").description("Inspect MCP server configuration");
+
+mcp
+  .command("list")
+  .description("List discovered MCP servers")
+  .action(() => {
+    const ctx = detectProjectContext();
+    const servers = discoverMcpServers(ctx);
+    if (servers.length === 0) {
+      console.log(chalk.yellow("No MCP servers discovered."));
+      return;
+    }
+    for (const s of servers) {
+      const endpoint = s.type === "http" ? s.url : [s.command, ...(s.args ?? [])].filter(Boolean).join(" ");
+      console.log(`${s.name.padEnd(16)} ${s.type.padEnd(5)} ${s.enabled ? "enabled " : "disabled"} risk=${s.risk.padEnd(6)} ${endpoint ?? ""}`);
+      console.log(chalk.dim(`  source: ${s.source}`));
+    }
+  });
+
+mcp
+  .command("health")
+  .description("Check discovered MCP server configuration health")
+  .action(() => {
+    const ctx = detectProjectContext();
+    const servers = discoverMcpServers(ctx);
+    if (servers.length === 0) {
+      console.log(chalk.yellow("No MCP servers discovered."));
+      return;
+    }
+    for (const s of servers) {
+      const h = checkMcpHealth(ctx, s);
+      console.log(`${h.ok ? chalk.green("OK") : chalk.yellow("WARN")} ${h.name}: ${h.message}`);
+    }
+  });
+
+program
+  .command("inspect")
+  .description("Inspect a topic using available project context; Serena semantic lookup is planned next")
+  .argument("<topic>")
+  .action((topic: string) => {
+    const ctx = detectProjectContext();
+    console.log(chalk.bold(`Inspect: ${topic}`));
+    console.log(formatProjectContext(ctx));
+    if (ctx.hasSerena) {
+      console.log(chalk.dim("Serena project detected. Semantic MCP lookup will be used once MCP tool execution is wired into Forge."));
+    } else {
+      console.log(chalk.yellow("Serena project not detected."));
+    }
+  });
+
+program
+  .command("design")
+  .description("Create a BMAD scaffold-domain design artifact")
+  .argument("<domain>", "data|ux|backend|infra|frontend|deployment")
+  .argument("<prompt>", "design prompt")
+  .action((domain: string, prompt: string) => {
+    const file = createDesignArtifact(domain, prompt);
+    console.log(chalk.green(`Design artifact written: ${file}`));
+  });
+
+program
+  .command("work")
+  .description("Create a brownfield work plan artifact for an existing project")
+  .argument("<request>")
+  .action((request: string) => {
+    const file = createBrownfieldWorkPlan(request);
+    console.log(chalk.green(`Brownfield work plan written: ${file}`));
+  });
 
 program
   .command("models")
@@ -113,7 +233,7 @@ program
       console.log(`  ${m.padEnd(7)} calls=${v.calls}  in=${v.in}  out=${v.out}  $${v.cost.toFixed(4)}`);
     }
     console.log(chalk.bold(`  TOTAL: $${total.toFixed(4)}`));
-    console.log(chalk.dim(`  (Codex CLI typically does not report cost — those calls show $0.)`));
+    console.log(chalk.dim(`  (Codex CLI typically does not report cost - those calls show $0.)`));
   });
 
 program
@@ -125,7 +245,7 @@ program
     for (const r of runs) {
       try {
         const p = readPlan(r);
-        console.log(`  ${r}  — ${p.prompt.slice(0, 60)}`);
+        console.log(`  ${r} - ${p.prompt.slice(0, 60)}`);
       } catch {
         console.log(`  ${r}`);
       }
@@ -155,3 +275,13 @@ async function doctor(verbose = false) {
 }
 
 program.parseAsync(process.argv);
+
+function validateModel(model?: string): void {
+  if (!model) return;
+  getModel(model);
+}
+
+function parseContextBudget(value: string): "low" | "standard" | "deep" {
+  if (value === "low" || value === "standard" || value === "deep") return value;
+  throw new Error(`Invalid context budget '${value}'. Expected low, standard, or deep.`);
+}
