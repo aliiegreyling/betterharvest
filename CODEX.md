@@ -15,3 +15,5 @@ Use Serena MCP for codebase traversal if the server is exposed. If not, state th
 Keep this file, `AGENTS.md`, `CLAUDE.md`, and `.github/copilot-instructions.md` current when the product workflow or agent framework changes.
 
 Forge is chat-first. Running `forge` or `forge chat` opens the harness; plain text chats with the selected model, and slash commands (`/request`, `/plan`, `/new`, `/design`, `/work`, `/mcp`, `/context`) invoke project creation and maintenance journeys.
+
+Use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` for verbose Forge diagnostics. Default CLI errors should stay concise and actionable.

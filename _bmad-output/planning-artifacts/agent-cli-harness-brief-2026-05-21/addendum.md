@@ -111,6 +111,16 @@ Forge now starts as an interactive chat harness when run without a subcommand or
 - Chat defaults can be changed with `/set target-dir`, `/set model`, `/set coder`, `/set context-budget`, `/set bmad`, and `/set skip-doctor`.
 - Existing Commander subcommands remain available for scripts and CI.
 
+### v0.3 Error Handling and Diagnostics Progress
+
+Forge now includes a diagnostics layer for chat and direct subcommands:
+
+- User-facing failures are grouped into likely causes such as authentication, missing provider CLI, unknown model, invalid input, missing captured request, and timeout.
+- Error output includes next steps by default instead of dumping raw stack traces.
+- Verbose mode is available through `FORGE_DEBUG=1`, `forge --verbose ...`, and `/set debug true`.
+- Verbose logs include command start/end events, redacted model adapter spawn details, timings, and stack traces.
+- Chat command failures are recoverable; the chat loop continues after invalid commands or bad settings.
+
 Still pending:
 
 - Live MCP client execution and tool discovery.

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { createInterface } from "node:readline/promises";
+import { createInterface } from "node:readline";
 import path from "node:path";
 import { runForge } from "../runner.js";
 import { ContextBudget } from "../types.js";
@@ -11,12 +11,14 @@ import { detectProjectContext, formatProjectContext } from "../project/context.j
 import { checkMcpHealth, discoverMcpServers } from "../mcp/registry.js";
 import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "../project/commands.js";
 import { runCli } from "../agents/cli-runner.js";
+import { debugLog, printUserError, verboseEnabled } from "../util/diagnostics.js";
 
 interface ChatDefaults {
   targetDir: string;
   contextBudget: ContextBudget;
   bmad: boolean;
   skipDoctor: boolean;
+  debug: boolean;
   model?: string;
   coder?: string;
 }
@@ -49,7 +51,7 @@ const HELP = [
   "  /help                         Show commands",
   "  /exit                         Leave chat",
   "  /show                         Show current chat defaults and captured request",
-  "  /set <key> <value>             Set target-dir, model, coder, context-budget, bmad, or skip-doctor",
+  "  /set <key> <value>             Set target-dir, model, coder, context-budget, bmad, skip-doctor, or debug",
   "  /request <text>                Capture a project request without calling a model",
   "  /clear                        Clear captured request",
   "  /ask <message>                 Chat with the selected model",
@@ -57,6 +59,7 @@ const HELP = [
   "  /plan [prompt]                 Build a dry-run routing plan",
   "  /new [prompt]                  Execute a project build or maintenance flow",
   "  /resume <run-id>               Resume a run",
+  "  /doctor                       Check required CLIs",
   "  /status                       Show project, BMAD, Serena, MCP, and Forge context",
   "  /context [show|refresh]        Show or refresh BMAD context artifact",
   "  /mcp [list|health]             Inspect MCP configuration",
@@ -73,7 +76,7 @@ const HELP = [
   "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor.",
 ].join("\n");
 
-export async function startChat(): Promise<void> {
+export async function startChat(opts: { debug?: boolean } = {}): Promise<void> {
   const session: ChatSession = {
     messages: [],
     defaults: {
@@ -81,6 +84,7 @@ export async function startChat(): Promise<void> {
       contextBudget: "standard",
       bmad: false,
       skipDoctor: false,
+      debug: verboseEnabled(opts.debug),
     },
   };
 
@@ -90,19 +94,32 @@ export async function startChat(): Promise<void> {
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: process.stdin.isTTY ? "forge> " : undefined,
+    terminal: Boolean(process.stdin.isTTY),
+    historySize: 100,
+    removeHistoryDuplicates: true,
+    escapeCodeTimeout: 50,
+  });
+  rl.setPrompt("forge> ");
+  rl.on("SIGINT", () => {
+    console.log(chalk.dim("\nUse /exit to leave Forge chat."));
+    if (process.stdin.isTTY) rl.prompt();
   });
 
   if (process.stdin.isTTY) rl.prompt();
   for await (const raw of rl) {
-    const line = raw.trim();
+    const line = normalizeLineEditing(raw).trim();
+    let keepGoing = true;
+    rl.pause();
     try {
-      const keepGoing = await handleChatLine(line, session);
-      if (!keepGoing) break;
+      debugLog("chat", "handling line", { line: redactLine(line) }, session.defaults.debug);
+      keepGoing = await handleChatLine(line, session);
     } catch (e) {
-      console.error(chalk.red("Chat command failed:"), (e as Error).message);
+      printUserError(e, { command: line.startsWith("/") ? line.split(/\s+/)[0] : "chat", verbose: session.defaults.debug });
+    } finally {
+      if (!keepGoing) break;
+      rl.resume();
+      if (process.stdin.isTTY) rl.prompt();
     }
-    if (process.stdin.isTTY) rl.prompt();
   }
 
   rl.close();
@@ -118,6 +135,10 @@ async function handleChatLine(line: string, session: ChatSession): Promise<boole
   }
 
   const [commandToken, ...args] = tokenize(line);
+  if (!commandToken || commandToken === "/") {
+    console.log(chalk.yellow("Empty command. Type /help for available commands."));
+    return true;
+  }
   const command = commandToken.slice(1).toLowerCase();
 
   switch (command) {
@@ -153,6 +174,9 @@ async function handleChatLine(line: string, session: ChatSession): Promise<boole
       return true;
     case "resume":
       await runResumeCommand(session, args);
+      return true;
+    case "doctor":
+      await doctor(true);
       return true;
     case "status":
       console.log(buildStatusText());
@@ -200,6 +224,22 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+function normalizeLineEditing(input: string): string {
+  const chars: string[] = [];
+  for (const ch of Array.from(input)) {
+    if (ch === "\b" || ch === "\x7f") {
+      chars.pop();
+      continue;
+    }
+    if (ch === "\x15") {
+      chars.length = 0;
+      continue;
+    }
+    chars.push(ch);
+  }
+  return chars.join("");
+}
+
 async function runAskCommand(session: ChatSession, args: string[]): Promise<void> {
   const message = args.join(" ").trim();
   if (!message) throw new Error("Usage: /ask <message>");
@@ -210,6 +250,7 @@ async function runAskCommand(session: ChatSession, args: string[]): Promise<void
 async function runChatTurn(session: ChatSession, message: string): Promise<void> {
   const modelId = session.defaults.model ?? "sonnet";
   validateModel(modelId);
+  debugLog("chat", "starting model turn", { modelId, messageLength: message.length }, session.defaults.debug);
   const projectContext = formatProjectContext(detectProjectContext(), { portable: true });
   const history = session.messages.slice(-8).map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
   const prompt = [
@@ -235,6 +276,7 @@ async function runChatTurn(session: ChatSession, message: string): Promise<void>
     allowedTools: [],
     chatOnly: true,
     timeoutMs: 120_000,
+    verbose: session.defaults.debug,
   });
 
   if (!res.ok) {
@@ -244,6 +286,7 @@ async function runChatTurn(session: ChatSession, message: string): Promise<void>
   const answer = res.finalText.trim();
   session.messages.push({ role: "user", content: message });
   session.messages.push({ role: "assistant", content: answer });
+  debugLog("chat", "model turn completed", { modelId, durationMs: res.durationMs, tokensIn: res.tokensIn, tokensOut: res.tokensOut }, session.defaults.debug);
   console.log(answer);
 }
 
@@ -258,6 +301,7 @@ async function runPlanCommand(session: ChatSession, args: string[]): Promise<voi
   const flow = parseFlowArgs(session, args, true);
   const prompt = resolvePrompt(session, flow.prompt);
   session.lastPrompt = prompt;
+  debugLog("chat", "running /plan", summarizeFlow(flow, prompt), session.defaults.debug);
   if (!flow.skipDoctor) await doctor();
   validateModel(flow.model);
   validateModel(flow.coder);
@@ -276,6 +320,7 @@ async function runNewCommand(session: ChatSession, args: string[]): Promise<void
   const flow = parseFlowArgs(session, args, false);
   const prompt = resolvePrompt(session, flow.prompt);
   session.lastPrompt = prompt;
+  debugLog("chat", "running /new", summarizeFlow(flow, prompt), session.defaults.debug);
   if (!flow.skipDoctor) await doctor();
   validateModel(flow.model);
   validateModel(flow.coder);
@@ -294,6 +339,7 @@ async function runResumeCommand(session: ChatSession, args: string[]): Promise<v
   const runId = args.find((arg) => !arg.startsWith("--"));
   if (!runId) throw new Error("Usage: /resume <run-id> [--target-dir <dir>] [--skip-doctor]");
   const flow = parseFlowArgs(session, args.filter((arg) => arg !== runId), false);
+  debugLog("chat", "running /resume", { runId, targetDir: flow.targetDir, skipDoctor: flow.skipDoctor }, session.defaults.debug);
   if (!flow.skipDoctor) await doctor();
   await runForge({ prompt: "", targetDir: path.resolve(flow.targetDir), resumeRunId: runId });
 }
@@ -345,7 +391,7 @@ function setDefault(session: ChatSession, args: string[]): void {
   const [key, ...rest] = args;
   const value = rest.join(" ");
   if (!key || !value) {
-    throw new Error("Usage: /set <target-dir|model|coder|context-budget|bmad|skip-doctor> <value>");
+    throw new Error("Usage: /set <target-dir|model|coder|context-budget|bmad|skip-doctor|debug> <value>");
   }
 
   switch (key) {
@@ -368,6 +414,9 @@ function setDefault(session: ChatSession, args: string[]): void {
       break;
     case "skip-doctor":
       session.defaults.skipDoctor = parseBoolean(value, key);
+      break;
+    case "debug":
+      session.defaults.debug = parseBoolean(value, key);
       break;
     default:
       throw new Error(`Unknown setting: ${key}`);
@@ -460,6 +509,7 @@ function showSession(session: ChatSession): void {
   console.log(`  context-budget: ${session.defaults.contextBudget}`);
   console.log(`  bmad: ${session.defaults.bmad}`);
   console.log(`  skip-doctor: ${session.defaults.skipDoctor}`);
+  console.log(`  debug: ${session.defaults.debug}`);
 }
 
 function showModels(): void {
@@ -525,6 +575,7 @@ function showCost(args: string[]): void {
 }
 
 async function doctor(verbose = false): Promise<void> {
+  debugLog("doctor", "checking CLI adapters", undefined, verbose);
   const adapters = listAdapters();
   const results = await Promise.all(adapters.map(async (a) => ({ a, r: await checkCli(a.binName) })));
   const claudeRes = results.find((x) => x.a.name === "claude")?.r;
@@ -543,6 +594,23 @@ async function doctor(verbose = false): Promise<void> {
   if (!claudeRes?.ok) {
     throw new Error("claude CLI is required. Install Claude Code: https://claude.com/claude-code");
   }
+}
+
+function summarizeFlow(flow: FlowArgs, prompt: string): object {
+  return {
+    targetDir: flow.targetDir,
+    contextBudget: flow.contextBudget,
+    bmad: flow.bmad,
+    skipDoctor: flow.skipDoctor,
+    dryRun: flow.dryRun,
+    model: flow.model ?? "(auto)",
+    coder: flow.coder ?? "(auto)",
+    promptLength: prompt.length,
+  };
+}
+
+function redactLine(line: string): string {
+  return line.replace(/(password|token|secret|key)=\S+/gi, "$1=<redacted>");
 }
 
 function validateModel(model?: string): void {

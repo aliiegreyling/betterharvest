@@ -1,5 +1,6 @@
 node_modules/
 dist/
+forge-out/
 *.log
 .env
 .env.local
