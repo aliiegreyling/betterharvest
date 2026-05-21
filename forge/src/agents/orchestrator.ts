@@ -76,8 +76,11 @@ export function buildPlan(
     createdAt: new Date().toISOString(),
     prompt,
     classification,
-    nodes: annotateRouting(nodes, classification),
+    nodes: annotateRouting(nodes, classification, ctx.modelOverride),
     totalBudgetUsd: ctx.budgetUsd,
+    contextBudget: ctx.contextBudget,
+    modelOverride: ctx.modelOverride,
+    projectContext: ctx.projectContext,
   };
 }
 

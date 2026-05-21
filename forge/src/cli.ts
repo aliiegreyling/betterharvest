@@ -3,8 +3,11 @@ import { Command } from "commander";
 import chalk from "chalk";
 import path from "node:path";
 import { runForge } from "./runner.js";
-import { MODELS } from "./models/registry.js";
+import { getModel, MODELS } from "./models/registry.js";
 import { readAudit, readPlan, listRuns } from "./run/state.js";
+import { detectProjectContext, formatProjectContext } from "./project/context.js";
+import { checkMcpHealth, discoverMcpServers } from "./mcp/registry.js";
+import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "./project/commands.js";
 
 const program = new Command();
 program.name("forge").description("Agentic CLI that builds projects from a prompt").version("0.1.0");
@@ -15,14 +18,21 @@ program
   .argument("<prompt>", "natural-language description of the project to build")
   .option("--target-dir <dir>", "where to write the generated project", "./forge-out")
   .option("--budget <usd>", "max total cost in USD", "3.00")
+  .option("--model <id>", "override model for non-verification phases")
+  .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
+  .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
   .option("--dry-run", "print plan without executing", false)
-  .action(async (prompt: string, opts: { targetDir: string; budget: string; dryRun: boolean }) => {
+  .action(async (prompt: string, opts: { targetDir: string; budget: string; dryRun: boolean; model?: string; contextBudget: string; bmad: boolean }) => {
     try {
+      validateModel(opts.model);
       await runForge({
         prompt,
         targetDir: path.resolve(opts.targetDir),
         budgetUsd: parseFloat(opts.budget),
         dryRun: opts.dryRun,
+        modelOverride: opts.model,
+        contextBudget: parseContextBudget(opts.contextBudget),
+        bmadOutput: opts.bmad,
       });
     } catch (e) {
       console.error(chalk.red("Run failed:"), (e as Error).message);
@@ -36,12 +46,19 @@ program
   .argument("<prompt>")
   .option("--target-dir <dir>", "where the project would be written", "./forge-out")
   .option("--budget <usd>", "max total cost in USD", "3.00")
-  .action(async (prompt: string, opts: { targetDir: string; budget: string }) => {
+  .option("--model <id>", "override model for non-verification phases")
+  .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
+  .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
+  .action(async (prompt: string, opts: { targetDir: string; budget: string; model?: string; contextBudget: string; bmad: boolean }) => {
+    validateModel(opts.model);
     await runForge({
       prompt,
       targetDir: path.resolve(opts.targetDir),
       budgetUsd: parseFloat(opts.budget),
       dryRun: true,
+      modelOverride: opts.model,
+      contextBudget: parseContextBudget(opts.contextBudget),
+      bmadOutput: opts.bmad,
     });
   });
 
@@ -58,6 +75,95 @@ program
       budgetUsd: parseFloat(opts.budget),
       resumeRunId: runId,
     });
+  });
+
+program
+  .command("status")
+  .description("Show project, BMAD, Serena, MCP, and Forge context")
+  .action(() => {
+    console.log(buildStatusText());
+  });
+
+program
+  .command("context")
+  .description("Manage Forge context artifacts")
+  .argument("[action]", "show|refresh", "show")
+  .action((action: string) => {
+    if (action === "refresh") {
+      const file = refreshContext();
+      console.log(chalk.green(`Context artifact written: ${file}`));
+      return;
+    }
+    console.log(buildStatusText());
+  });
+
+const mcp = program.command("mcp").description("Inspect MCP server configuration");
+
+mcp
+  .command("list")
+  .description("List discovered MCP servers")
+  .action(() => {
+    const ctx = detectProjectContext();
+    const servers = discoverMcpServers(ctx);
+    if (servers.length === 0) {
+      console.log(chalk.yellow("No MCP servers discovered."));
+      return;
+    }
+    for (const s of servers) {
+      const endpoint = s.type === "http" ? s.url : [s.command, ...(s.args ?? [])].filter(Boolean).join(" ");
+      console.log(`${s.name.padEnd(16)} ${s.type.padEnd(5)} ${s.enabled ? "enabled " : "disabled"} risk=${s.risk.padEnd(6)} ${endpoint ?? ""}`);
+      console.log(chalk.dim(`  source: ${s.source}`));
+    }
+  });
+
+mcp
+  .command("health")
+  .description("Check discovered MCP server configuration health")
+  .action(() => {
+    const ctx = detectProjectContext();
+    const servers = discoverMcpServers(ctx);
+    if (servers.length === 0) {
+      console.log(chalk.yellow("No MCP servers discovered."));
+      return;
+    }
+    for (const s of servers) {
+      const h = checkMcpHealth(ctx, s);
+      console.log(`${h.ok ? chalk.green("OK") : chalk.yellow("WARN")} ${h.name}: ${h.message}`);
+    }
+  });
+
+program
+  .command("inspect")
+  .description("Inspect a topic using available project context; Serena semantic lookup is planned next")
+  .argument("<topic>")
+  .action((topic: string) => {
+    const ctx = detectProjectContext();
+    console.log(chalk.bold(`Inspect: ${topic}`));
+    console.log(formatProjectContext(ctx));
+    if (ctx.hasSerena) {
+      console.log(chalk.dim("Serena project detected. Semantic MCP lookup will be used once MCP tool execution is wired into Forge."));
+    } else {
+      console.log(chalk.yellow("Serena project not detected."));
+    }
+  });
+
+program
+  .command("design")
+  .description("Create a BMAD scaffold-domain design artifact")
+  .argument("<domain>", "data|ux|backend|infra|frontend|deployment")
+  .argument("<prompt>", "design prompt")
+  .action((domain: string, prompt: string) => {
+    const file = createDesignArtifact(domain, prompt);
+    console.log(chalk.green(`Design artifact written: ${file}`));
+  });
+
+program
+  .command("work")
+  .description("Create a brownfield work plan artifact for an existing project")
+  .argument("<request>")
+  .action((request: string) => {
+    const file = createBrownfieldWorkPlan(request);
+    console.log(chalk.green(`Brownfield work plan written: ${file}`));
   });
 
 program
@@ -132,3 +238,13 @@ program
   });
 
 program.parseAsync(process.argv);
+
+function validateModel(model?: string): void {
+  if (!model) return;
+  getModel(model);
+}
+
+function parseContextBudget(value: string): "low" | "standard" | "deep" {
+  if (value === "low" || value === "standard" || value === "deep") return value;
+  throw new Error(`Invalid context budget '${value}'. Expected low, standard, or deep.`);
+}

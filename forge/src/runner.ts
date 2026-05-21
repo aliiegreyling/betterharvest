@@ -4,8 +4,10 @@ import path from "node:path";
 import { classify } from "./agents/classifier.js";
 import { buildPlan } from "./agents/orchestrator.js";
 import { runArch, runBrief, runImpl, runReview, runStories, runVerify } from "./agents/sdlc.js";
-import { Plan, RunContext } from "./types.js";
+import { ContextBudget, Plan, RunContext } from "./types.js";
 import { appendAudit, ensureRunDir, newRunId, saveCheckpoint, writePlan, readPlan } from "./run/state.js";
+import { detectProjectContext } from "./project/context.js";
+import { writeBmadPlanArtifact } from "./bmad/artifacts.js";
 
 export interface RunOptions {
   prompt: string;
@@ -13,12 +15,16 @@ export interface RunOptions {
   budgetUsd: number;
   dryRun?: boolean;
   resumeRunId?: string;
+  modelOverride?: string;
+  contextBudget?: ContextBudget;
+  bmadOutput?: boolean;
 }
 
 export async function runForge(opts: RunOptions): Promise<{ runId: string; plan: Plan }> {
   const runId = opts.resumeRunId ?? newRunId();
   const runDirPath = ensureRunDir(runId);
   const targetDir = path.resolve(opts.targetDir);
+  const projectContext = detectProjectContext(process.cwd());
   fs.mkdirSync(targetDir, { recursive: true });
 
   const ctx: RunContext = {
@@ -27,11 +33,17 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     targetDir,
     budgetUsd: opts.budgetUsd,
     spentUsd: 0,
+    projectContext,
+    contextBudget: opts.contextBudget ?? "standard",
+    modelOverride: opts.modelOverride ?? process.env.FORGE_MODEL,
+    bmadOutput: opts.bmadOutput ?? false,
   };
 
   console.log(chalk.bold(`\nforge run ${runId}`));
   console.log(chalk.dim(`  target: ${targetDir}`));
   console.log(chalk.dim(`  budget: $${opts.budgetUsd.toFixed(2)}`));
+  console.log(chalk.dim(`  context budget: ${ctx.contextBudget}`));
+  if (ctx.modelOverride) console.log(chalk.dim(`  model override: ${ctx.modelOverride}`));
 
   let plan: Plan;
   if (opts.resumeRunId) {
@@ -47,6 +59,10 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     );
     plan = buildPlan(opts.prompt, classification, ctx);
     writePlan(runId, plan);
+    if (ctx.bmadOutput) {
+      const artifactDir = writeBmadPlanArtifact(projectContext, plan);
+      if (artifactDir) console.log(chalk.dim(`  BMAD plan: ${artifactDir}`));
+    }
     saveCheckpoint(runId, "00-plan", plan);
   }
 

@@ -27,6 +27,9 @@ export function escalate(currentModel: string): string | null {
   return ladder[i + 1];
 }
 
-export function annotateRouting(nodes: PlanNode[], c: Classification): PlanNode[] {
-  return nodes.map((n) => ({ ...n, modelId: pickModel(n.phase, c) }));
+export function annotateRouting(nodes: PlanNode[], c: Classification, override?: string): PlanNode[] {
+  return nodes.map((n) => ({
+    ...n,
+    modelId: override && n.phase !== "verify" ? override : pickModel(n.phase, c),
+  }));
 }

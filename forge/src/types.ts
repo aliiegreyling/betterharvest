@@ -9,6 +9,8 @@ export type Phase =
   | "verify"
   | "review";
 
+export type ContextBudget = "low" | "standard" | "deep";
+
 export type Strength =
   | "classification"
   | "planning"
@@ -56,9 +58,43 @@ export interface Plan {
   classification: Classification;
   nodes: PlanNode[];
   totalBudgetUsd: number;
+  contextBudget: ContextBudget;
+  modelOverride?: string;
+  projectContext?: ProjectContext;
 }
 
 export type ToolName = "read_file" | "write_file" | "edit_file" | "list_files" | "shell";
+
+export interface ProjectContext {
+  cwd: string;
+  projectRoot: string;
+  gitRoot?: string;
+  branch?: string;
+  hasBmad: boolean;
+  hasSerena: boolean;
+  hasForge: boolean;
+  bmadPlanningDir?: string;
+  serenaProjectFile?: string;
+  packageManager?: "npm" | "pnpm" | "yarn" | "none";
+}
+
+export interface McpServerConfig {
+  name: string;
+  type: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  enabled: boolean;
+  source: string;
+  risk: "low" | "medium" | "high";
+}
+
+export interface McpHealth {
+  name: string;
+  ok: boolean;
+  source: string;
+  message: string;
+}
 
 export interface AuditEvent {
   ts: string;
@@ -105,4 +141,8 @@ export interface RunContext {
   targetDir: string;
   budgetUsd: number;
   spentUsd: number;
+  projectContext: ProjectContext;
+  contextBudget: ContextBudget;
+  modelOverride?: string;
+  bmadOutput: boolean;
 }
