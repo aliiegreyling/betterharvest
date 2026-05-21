@@ -38,6 +38,8 @@ Keep agent guidance current as the system evolves. Update `AGENTS.md`, `CLAUDE.m
 
 Forge is now a chat-first harness. Running `forge` or `forge chat` opens an interactive session where plain text chats with the selected model and slash commands invoke operations. Use `/request` to capture a project idea without spending model tokens, then `/plan`, `/new`, `/design`, `/work`, `/mcp`, or `/context` to drive the relevant BMAD/MCP workflow.
 
+For Forge debugging, use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` in chat. Errors should remain user-friendly by default and include actionable next steps; verbose output may include stack traces and redacted adapter invocation details.
+
 ## Engineering Standards
 
 Treat this as a .NET and TypeScript product workspace unless future planning chooses otherwise. Favor clean, scalable development and pragmatic platform choices across Azure, Resend, Descope, Neon, and related integration services.

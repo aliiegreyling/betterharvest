@@ -41,9 +41,28 @@ Plain text chats directly with the selected model, using compact project context
 /design data "todo domain model"
 /work "add authentication to the existing app"
 /mcp health
+/set debug true
+/doctor
 ```
 
 Use `/request <text>` to capture a project idea without spending model tokens. Use plain text or `/ask <message>` when you want a model response.
+
+## Diagnostics
+
+Forge reports user-facing errors with next steps instead of raw stack traces by default. Enable verbose diagnostics while developing:
+
+```bash
+FORGE_DEBUG=1 node dist/cli.js
+node dist/cli.js --verbose models
+```
+
+Inside chat, use:
+
+```text
+/set debug true
+```
+
+Verbose mode logs command start/end events, model adapter spawning details with long prompts redacted, timings, and stack traces for failed commands.
 
 ## Script Usage
 

@@ -3,6 +3,7 @@ import { getAdapter } from "../cli-adapters/index.js";
 import { getModel } from "../models/registry.js";
 import { CliResult } from "../types.js";
 import { resolveBin, spawnArgs } from "../util/resolve-bin.js";
+import { debugLog } from "../util/diagnostics.js";
 
 export interface RunCliOpts {
   modelId: string;
@@ -10,6 +11,7 @@ export interface RunCliOpts {
   cwd: string;
   allowedTools?: string[];
   chatOnly?: boolean;
+  verbose?: boolean;
   timeoutMs?: number;
   onLine?: (line: string) => void;
 }
@@ -35,6 +37,7 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
   const started = Date.now();
   const resolved = await resolveBin(adapter.binName);
   if (!resolved) {
+    debugLog("cli-runner", "adapter binary not found", { adapter: adapter.binName, modelId: opts.modelId }, opts.verbose);
     return {
       ok: false,
       stdout: "",
@@ -51,6 +54,14 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
     let timedOut = false;
 
     const s = spawnArgs(resolved, args);
+    debugLog("cli-runner", "spawning adapter", {
+      adapter: adapter.binName,
+      modelId: opts.modelId,
+      cwd: opts.cwd,
+      chatOnly: opts.chatOnly ?? false,
+      allowedTools: opts.allowedTools ?? [],
+      args: redactArgs(args),
+    }, opts.verbose);
     const child = spawn(s.command, s.args, {
       ...s.options,
       cwd: opts.cwd,
@@ -75,6 +86,14 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
       const durationMs = Date.now() - started;
       const exitCode = code ?? -1;
       const parsed = adapter.parseOutput(stdout);
+      debugLog("cli-runner", "adapter closed", {
+        adapter: adapter.binName,
+        modelId: opts.modelId,
+        exitCode,
+        durationMs,
+        timedOut,
+        stderrTail: stderr.slice(-500),
+      }, opts.verbose);
       resolve({
         ok: exitCode === 0 && !timedOut,
         stdout,
@@ -90,6 +109,11 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
 
     child.on("error", (err) => {
       if (timer) clearTimeout(timer);
+      debugLog("cli-runner", "adapter spawn error", {
+        adapter: adapter.binName,
+        modelId: opts.modelId,
+        error: err.message,
+      }, opts.verbose);
       resolve({
         ok: false,
         stdout,
@@ -99,5 +123,13 @@ export async function runCli(opts: RunCliOpts): Promise<CliResult> {
         finalText: stderr + "\nspawn error: " + err.message,
       });
     });
+  });
+}
+
+function redactArgs(args: string[]): string[] {
+  return args.map((arg) => {
+    if (/token|secret|password|key/i.test(arg)) return "<redacted>";
+    if (arg.length > 240) return `${arg.slice(0, 240)}...<truncated>`;
+    return arg;
   });
 }
