@@ -130,4 +130,5 @@ export interface RunContext {
   contextBudget: ContextBudget;
   modelOverride?: string;
   bmadOutput: boolean;
+  phaseNotes?: Partial<Record<Phase, string>>;
 }

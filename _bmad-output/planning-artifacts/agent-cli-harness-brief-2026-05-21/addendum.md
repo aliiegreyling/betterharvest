@@ -107,6 +107,8 @@ Forge now starts as an interactive chat harness when run without a subcommand or
 - Plain text routes to the selected model for direct conversation with compact project context.
 - `/request <text>` captures a project idea without invoking a model.
 - `/plan` and `/new` can use the captured request or an inline prompt.
+- `/new` is now a guided chat journey that collects setup details before execution and supports `step`, `auto`, `plan`, and `cancel` modes.
+- In `step` mode, Forge pauses before each agent phase so the user can type phase-specific guidance, `/skip`, or `/abort`.
 - Slash commands expose the existing operations: `/status`, `/context`, `/mcp`, `/inspect`, `/design`, `/work`, `/models`, `/runs`, `/log`, `/cost`, and `/resume`.
 - Chat defaults can be changed with `/set target-dir`, `/set model`, `/set coder`, `/set context-budget`, `/set bmad`, and `/set skip-doctor`.
 - Existing Commander subcommands remain available for scripts and CI.

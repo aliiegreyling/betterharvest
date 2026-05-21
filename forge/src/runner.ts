@@ -4,7 +4,7 @@ import path from "node:path";
 import { classify } from "./agents/classifier.js";
 import { buildPlan } from "./agents/orchestrator.js";
 import { runArch, runBrief, runImpl, runReview, runStories, runVerify } from "./agents/sdlc.js";
-import { ContextBudget, Plan, RunContext } from "./types.js";
+import { ContextBudget, Phase, Plan, PlanNode, RunContext } from "./types.js";
 import { appendAudit, ensureRunDir, newRunId, readPlan, saveCheckpoint, writePlan } from "./run/state.js";
 import { detectProjectContext } from "./project/context.js";
 import { writeBmadPlanArtifact } from "./bmad/artifacts.js";
@@ -18,6 +18,21 @@ export interface RunOptions {
   modelOverride?: string;
   contextBudget?: ContextBudget;
   bmadOutput?: boolean;
+  beforePhase?: (phase: PhasePrompt) => Promise<PhaseDecision>;
+}
+
+export interface PhasePrompt {
+  runId: string;
+  idx: number;
+  name: string;
+  phase: Phase;
+  node: PlanNode;
+  targetDir: string;
+}
+
+export interface PhaseDecision {
+  action: "run" | "skip" | "abort";
+  note?: string;
 }
 
 export async function runForge(opts: RunOptions): Promise<{ runId: string; plan: Plan }> {
@@ -36,6 +51,7 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     contextBudget: opts.contextBudget ?? "standard",
     modelOverride: opts.modelOverride ?? process.env.FORGE_MODEL,
     bmadOutput: opts.bmadOutput ?? false,
+    phaseNotes: {},
   };
 
   console.log(chalk.bold(`\nforge run ${runId}`));
@@ -85,6 +101,33 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
 
   for (const ph of phases) {
     const node = plan.nodes.find((n) => n.phase === ph.phase)!;
+    const decision = await opts.beforePhase?.({
+      runId,
+      idx: ph.idx,
+      name: ph.name,
+      phase: ph.phase,
+      node,
+      targetDir,
+    });
+
+    if (decision?.action === "abort") {
+      appendAudit(runId, { kind: "info", nodeId: node.id, modelId: node.modelId, message: `aborted before ${ph.phase}` });
+      console.log(chalk.yellow(`\nAborted before ${ph.name}. Run id: ${runId}`));
+      break;
+    }
+
+    if (decision?.action === "skip") {
+      appendAudit(runId, { kind: "phase_end", nodeId: node.id, modelId: node.modelId, ok: true, message: `skipped ${ph.phase}` });
+      saveCheckpoint(runId, ph.checkpoint, { ok: true, skipped: true });
+      console.log(chalk.yellow(`\n[${ph.idx}/7] ${ph.name} skipped by user`));
+      continue;
+    }
+
+    if (decision?.note) {
+      ctx.phaseNotes = { ...(ctx.phaseNotes ?? {}), [ph.phase]: decision.note };
+      appendAudit(runId, { kind: "info", nodeId: node.id, modelId: node.modelId, message: `user guidance provided for ${ph.phase}` });
+    }
+
     console.log(chalk.cyan(`\n[${ph.idx}/7] ${ph.name} (model ${node.modelId})`));
     appendAudit(runId, { kind: "phase_start", nodeId: node.id, modelId: node.modelId });
     const r = await ph.fn(ctx, plan);

@@ -115,15 +115,15 @@
   ],
   "contextBudget": "standard",
   "projectContext": {
-    "cwd": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\forge",
-    "projectRoot": "C:/Users/ConnorCress/source/McConf2026/betterharvest",
-    "gitRoot": "C:/Users/ConnorCress/source/McConf2026/betterharvest",
+    "cwd": "./forge",
+    "projectRoot": ".",
+    "gitRoot": ".",
     "branch": "main",
     "hasBmad": true,
     "hasSerena": true,
     "hasForge": true,
-    "bmadPlanningDir": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\_bmad-output\\planning-artifacts",
-    "serenaProjectFile": "C:\\Users\\ConnorCress\\source\\McConf2026\\betterharvest\\.serena\\project.yml",
+    "bmadPlanningDir": "./_bmad-output/planning-artifacts",
+    "serenaProjectFile": "./.serena/project.yml",
     "packageManager": "npm"
   }
 }

@@ -98,6 +98,18 @@ export function toErrorReport(error: unknown): ErrorReport {
     };
   }
 
+  if (/cancelled before execution|cancelled/i.test(raw)) {
+    return {
+      title: "Operation cancelled",
+      message: err.message,
+      nextSteps: [
+        "No project generation was started.",
+        "Run `/new <request>` again when ready, or `/plan <request>` to inspect the route first.",
+      ],
+      debug: raw,
+    };
+  }
+
   if (/requires a value|Usage:|Invalid context budget|Unknown flag|Unknown setting/i.test(raw)) {
     return {
       title: "Invalid command input",

@@ -38,6 +38,8 @@ Plain text chats directly with the selected model, using compact project context
 /request build a CLI todo in Python with SQLite
 /plan --bmad
 /new --target-dir ../todo --coder codex
+/new "inventory app" --step
+/new "inventory app" --plan-only
 /design data "todo domain model"
 /work "add authentication to the existing app"
 /mcp health
@@ -46,6 +48,13 @@ Plain text chats directly with the selected model, using compact project context
 ```
 
 Use `/request <text>` to capture a project idea without spending model tokens. Use plain text or `/ask <message>` when you want a model response.
+
+`/new` is guided in chat. In an interactive terminal it asks for the project request, target directory, context budget, and run mode before starting agent work:
+
+- `step` pauses before each phase so you can add phase-specific guidance, `/skip`, or `/abort`.
+- `auto` runs all phases without additional prompts.
+- `plan` classifies and prints the route only.
+- `cancel` exits before any model work starts.
 
 ## Diagnostics
 

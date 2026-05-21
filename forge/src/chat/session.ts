@@ -1,7 +1,7 @@
 import chalk from "chalk";
-import { createInterface } from "node:readline";
+import { createInterface, Interface } from "node:readline";
 import path from "node:path";
-import { runForge } from "../runner.js";
+import { PhaseDecision, PhasePrompt, runForge } from "../runner.js";
 import { ContextBudget } from "../types.js";
 import { getModel, MODELS } from "../models/registry.js";
 import { readAudit, readPlan, listRuns } from "../run/state.js";
@@ -41,8 +41,14 @@ interface FlowArgs {
   bmad: boolean;
   skipDoctor: boolean;
   dryRun: boolean;
+  confirmPhases: boolean;
   model?: string;
   coder?: string;
+}
+
+interface ChatRuntime {
+  canPrompt: boolean;
+  ask(query: string): Promise<string>;
 }
 
 const HELP = [
@@ -57,7 +63,7 @@ const HELP = [
   "  /ask <message>                 Chat with the selected model",
   "",
   "  /plan [prompt]                 Build a dry-run routing plan",
-  "  /new [prompt]                  Execute a project build or maintenance flow",
+  "  /new [prompt]                  Start a guided project creation journey",
   "  /resume <run-id>               Resume a run",
   "  /doctor                       Check required CLIs",
   "  /status                       Show project, BMAD, Serena, MCP, and Forge context",
@@ -73,7 +79,8 @@ const HELP = [
   "",
   "Plain text chats with the selected model and also becomes the current request.",
   "Use /request when you only want to capture a project idea without spending tokens.",
-  "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor.",
+  "/new starts with setup prompts in an interactive terminal. Choose step mode to add guidance before each agent phase.",
+  "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor, --auto, --step, --plan-only.",
 ].join("\n");
 
 export async function startChat(opts: { debug?: boolean } = {}): Promise<void> {
@@ -104,28 +111,29 @@ export async function startChat(opts: { debug?: boolean } = {}): Promise<void> {
     console.log(chalk.dim("\nUse /exit to leave Forge chat."));
     if (process.stdin.isTTY) rl.prompt();
   });
+  const runtime: ChatRuntime = {
+    canPrompt: Boolean(process.stdin.isTTY),
+    ask: async (query) => (await askQuestion(rl, query)) ?? "",
+  };
 
-  if (process.stdin.isTTY) rl.prompt();
-  for await (const raw of rl) {
+  while (true) {
+    const raw = await askQuestion(rl, process.stdin.isTTY ? "forge> " : "");
+    if (raw === undefined) break;
     const line = normalizeLineEditing(raw).trim();
     let keepGoing = true;
-    rl.pause();
     try {
       debugLog("chat", "handling line", { line: redactLine(line) }, session.defaults.debug);
-      keepGoing = await handleChatLine(line, session);
+      keepGoing = await handleChatLine(line, session, runtime);
     } catch (e) {
       printUserError(e, { command: line.startsWith("/") ? line.split(/\s+/)[0] : "chat", verbose: session.defaults.debug });
-    } finally {
-      if (!keepGoing) break;
-      rl.resume();
-      if (process.stdin.isTTY) rl.prompt();
     }
+    if (!keepGoing) break;
   }
 
   rl.close();
 }
 
-async function handleChatLine(line: string, session: ChatSession): Promise<boolean> {
+async function handleChatLine(line: string, session: ChatSession, runtime: ChatRuntime): Promise<boolean> {
   if (!line) return true;
 
   if (!line.startsWith("/")) {
@@ -170,7 +178,7 @@ async function handleChatLine(line: string, session: ChatSession): Promise<boole
       await runPlanCommand(session, args);
       return true;
     case "new":
-      await runNewCommand(session, args);
+      await runNewCommand(session, args, runtime);
       return true;
     case "resume":
       await runResumeCommand(session, args);
@@ -238,6 +246,29 @@ function normalizeLineEditing(input: string): string {
     chars.push(ch);
   }
   return chars.join("");
+}
+
+async function askQuestion(rl: Interface, query: string): Promise<string | undefined> {
+  const answer = await new Promise<string | undefined>((resolve) => {
+    let settled = false;
+    const cleanup = () => {
+      rl.off("close", onClose);
+    };
+    const onClose = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(undefined);
+    };
+    rl.once("close", onClose);
+    rl.question(query, (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(normalizeLineEditing(value));
+    });
+  });
+  return answer;
 }
 
 async function runAskCommand(session: ChatSession, args: string[]): Promise<void> {
@@ -316,9 +347,10 @@ async function runPlanCommand(session: ChatSession, args: string[]): Promise<voi
   });
 }
 
-async function runNewCommand(session: ChatSession, args: string[]): Promise<void> {
-  const flow = parseFlowArgs(session, args, false);
-  const prompt = resolvePrompt(session, flow.prompt);
+async function runNewCommand(session: ChatSession, args: string[], runtime: ChatRuntime): Promise<void> {
+  let flow = parseFlowArgs(session, args, false);
+  let prompt = resolvePrompt(session, flow.prompt);
+  ({ flow, prompt } = await prepareNewJourney(session, flow, prompt, args, runtime));
   session.lastPrompt = prompt;
   debugLog("chat", "running /new", summarizeFlow(flow, prompt), session.defaults.debug);
   if (!flow.skipDoctor) await doctor();
@@ -332,7 +364,73 @@ async function runNewCommand(session: ChatSession, args: string[]): Promise<void
     modelOverride: flow.model,
     contextBudget: flow.contextBudget,
     bmadOutput: flow.bmad,
+    beforePhase: flow.confirmPhases ? (phase) => askPhaseDecision(runtime, phase) : undefined,
   });
+}
+
+async function prepareNewJourney(
+  session: ChatSession,
+  flow: FlowArgs,
+  prompt: string,
+  args: string[],
+  runtime: ChatRuntime
+): Promise<{ flow: FlowArgs; prompt: string }> {
+  const explicitMode = args.includes("--auto") || args.includes("--yes") || args.includes("--step") || args.includes("--plan-only") || args.includes("--dry-run");
+  if (!runtime.canPrompt || explicitMode) return { flow, prompt };
+
+  console.log(chalk.bold("\nNew project journey"));
+  console.log(chalk.dim("Answer the setup prompts first. Agent execution starts after confirmation."));
+
+  const editedPrompt = await askWithDefault(runtime, "Project request", prompt);
+  const targetDir = await askWithDefault(runtime, "Target directory", flow.targetDir);
+  const contextBudget = await askWithDefault(runtime, "Context budget (low|standard|deep)", flow.contextBudget);
+  const mode = (await askWithDefault(runtime, "Run mode (step|auto|plan|cancel)", "step")).toLowerCase();
+
+  if (mode === "cancel" || mode === "c") throw new Error("Project creation cancelled before execution.");
+  if (mode !== "step" && mode !== "auto" && mode !== "plan") {
+    throw new Error("Invalid run mode. Expected step, auto, plan, or cancel.");
+  }
+
+  const nextFlow: FlowArgs = {
+    ...flow,
+    targetDir,
+    contextBudget: parseContextBudget(contextBudget),
+    dryRun: mode === "plan",
+    confirmPhases: mode === "step",
+  };
+
+  if (session.defaults.bmad) {
+    const bmad = await askWithDefault(runtime, "Write BMAD artifacts? (yes|no)", nextFlow.bmad ? "yes" : "no");
+    nextFlow.bmad = parseBoolean(bmad, "bmad");
+  }
+
+  console.log(chalk.dim(
+    nextFlow.dryRun
+      ? "Plan mode selected. Forge will classify and print the routing plan only."
+      : nextFlow.confirmPhases
+        ? "Step mode selected. Forge will pause before each phase for optional guidance."
+        : "Auto mode selected. Forge will run all phases without additional prompts."
+  ));
+
+  return { flow: nextFlow, prompt: editedPrompt };
+}
+
+async function askPhaseDecision(runtime: ChatRuntime, phase: PhasePrompt): Promise<PhaseDecision> {
+  console.log(chalk.bold(`\n${phase.name} setup`));
+  console.log(chalk.dim(`Phase ${phase.idx}/7 · role=${phase.node.role} · model=${phase.node.modelId}`));
+  console.log(chalk.dim("Press Enter to run, type guidance for this phase, or use /skip or /abort."));
+  const answer = await runtime.ask(`${phase.name}> `);
+  const normalized = answer.trim();
+
+  if (!normalized) return { action: "run" };
+  if (normalized === "/skip") return { action: "skip" };
+  if (normalized === "/abort" || normalized === "/cancel") return { action: "abort" };
+  return { action: "run", note: normalized };
+}
+
+async function askWithDefault(runtime: ChatRuntime, label: string, defaultValue: string): Promise<string> {
+  const answer = await runtime.ask(`${label} [${defaultValue}]: `);
+  return answer.trim() || defaultValue;
 }
 
 async function runResumeCommand(session: ChatSession, args: string[]): Promise<void> {
@@ -351,6 +449,7 @@ function parseFlowArgs(session: ChatSession, args: string[], forceDryRun: boolea
     bmad: session.defaults.bmad,
     skipDoctor: session.defaults.skipDoctor,
     dryRun: forceDryRun,
+    confirmPhases: false,
     model: session.defaults.model,
     coder: session.defaults.coder,
   };
@@ -367,6 +466,9 @@ function parseFlowArgs(session: ChatSession, args: string[], forceDryRun: boolea
     else if (arg === "--skip-doctor") result.skipDoctor = true;
     else if (arg === "--doctor") result.skipDoctor = false;
     else if (arg === "--dry-run") result.dryRun = true;
+    else if (arg === "--plan-only") result.dryRun = true;
+    else if (arg === "--step") result.confirmPhases = true;
+    else if (arg === "--auto" || arg === "--yes") result.confirmPhases = false;
     else if (arg.startsWith("--")) throw new Error(`Unknown flag: ${arg}`);
     else promptParts.push(arg);
   }
@@ -603,6 +705,7 @@ function summarizeFlow(flow: FlowArgs, prompt: string): object {
     bmad: flow.bmad,
     skipDoctor: flow.skipDoctor,
     dryRun: flow.dryRun,
+    confirmPhases: flow.confirmPhases,
     model: flow.model ?? "(auto)",
     coder: flow.coder ?? "(auto)",
     promptLength: prompt.length,

@@ -16,3 +16,5 @@ Write durable planning artifacts to `_bmad-output/planning-artifacts/`, implemen
 Forge runs as a chat-first CLI harness. Plain text in `forge`/`forge chat` talks to the selected model, while slash commands such as `/request`, `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context` drive project workflows.
 
 Forge diagnostics are enabled with `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true`; default errors should include user-friendly next steps.
+
+Chat `/new` should collect setup details and support step-mode phase guidance before running long agent phases.

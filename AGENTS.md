@@ -40,6 +40,8 @@ Forge is now a chat-first harness. Running `forge` or `forge chat` opens an inte
 
 For Forge debugging, use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` in chat. Errors should remain user-friendly by default and include actionable next steps; verbose output may include stack traces and redacted adapter invocation details.
 
+Chat `/new` should behave as a guided project creation journey: collect setup details first, then in step mode pause before each agent phase for user guidance, `/skip`, or `/abort`.
+
 ## Engineering Standards
 
 Treat this as a .NET and TypeScript product workspace unless future planning chooses otherwise. Favor clean, scalable development and pragmatic platform choices across Azure, Resend, Descope, Neon, and related integration services.

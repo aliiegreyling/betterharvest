@@ -20,7 +20,7 @@ export async function runSubAgent(
   userPrompt: string,
   opts: { allowEscalation?: boolean; timeoutMs?: number } = {}
 ): Promise<SubAgentResult> {
-  const composed = composePrompt(node, systemPromptExtra, userPrompt);
+  const composed = composePrompt(node, systemPromptExtra, userPrompt, ctx.phaseNotes?.[node.phase]);
   let modelId = node.modelId;
 
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -93,17 +93,18 @@ export async function runSubAgent(
   return { ok: false, output: "Escalation failed", modelUsed: modelId, costUsd: 0, durationMs: 0 };
 }
 
-function composePrompt(node: PlanNode, systemExtra: string, userPrompt: string): string {
+function composePrompt(node: PlanNode, systemExtra: string, userPrompt: string, phaseNote?: string): string {
   return [
     `# Role: ${node.role}`,
     `# Phase: ${node.phase}`,
     `# Goal: ${node.goal}`,
     ``,
     systemExtra,
+    phaseNote ? `\n# User guidance for this phase\n${phaseNote}` : undefined,
     ``,
     `# Task`,
     userPrompt,
     ``,
     `Work autonomously inside the current directory. Make reasonable decisions without asking questions. When complete, summarize what you did in 3-5 lines.`,
-  ].join("\n");
+  ].filter((line): line is string => line !== undefined).join("\n");
 }

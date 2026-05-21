@@ -21,3 +21,5 @@ Keep `AGENTS.md`, `CLAUDE.md`, `CODEX.md`, and `.github/copilot-instructions.md`
 Forge should be treated as chat-first. `forge` and `forge chat` open the harness; plain text chats with the selected model, while slash commands such as `/request`, `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context` start operational BMAD/MCP flows.
 
 Use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` when debugging Forge. Keep default errors user-friendly with recovery guidance.
+
+Use `/new` as a guided project journey in chat. Step mode pauses before each agent phase so the user can add guidance, skip, or abort.

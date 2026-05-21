@@ -30,7 +30,7 @@ forge context refresh   # write portable artifact under _bmad-output/.../forge-c
 
 ## Portable vs. local mode
 
-`formatProjectContext(ctx, { portable: true })` replaces the absolute `projectRoot` with `.` and collapses `gitRoot` to `.` when it equals the project root. **Always use portable mode for committed artifacts** — otherwise the artifacts carry your local `/Users/<you>/...` paths.
+`formatProjectContext(ctx, { portable: true })` replaces the absolute `projectRoot` with `.` and collapses `gitRoot` to `.` when it equals the project root. **Always use portable mode for committed artifacts**; otherwise artifacts carry machine-specific home-directory paths.
 
 `forge context refresh` and `forge status` (in artifact contexts) use portable mode by default.
 
