@@ -17,7 +17,7 @@ const MAX_TRANSIENT_RETRIES = 2;
 const BASE_BACKOFF_MS = 1_500;
 const HEARTBEAT_INTERVAL_MS = 20_000;
 
-function isTransientFailure(res: { exitCode: number; stderr: string; finalText: string }): boolean {
+export function isTransientFailure(res: { exitCode: number; stderr: string; finalText: string }): boolean {
   if (res.exitCode === 0) return false;
   const blob = `${res.stderr}\n${res.finalText}`.toLowerCase();
   return (
@@ -26,7 +26,7 @@ function isTransientFailure(res: { exitCode: number; stderr: string; finalText: 
   );
 }
 
-function backoffDelay(attempt: number): number {
+export function backoffDelay(attempt: number): number {
   const exp = BASE_BACKOFF_MS * Math.pow(2, attempt);
   const jitter = Math.random() * BASE_BACKOFF_MS;
   return Math.min(exp + jitter, 30_000);

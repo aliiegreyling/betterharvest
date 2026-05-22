@@ -20,7 +20,7 @@ export function verboseEnabled(explicit = false): boolean {
     || value.includes(",") || /^[a-zA-Z][\w-]*$/.test(value);
 }
 
-function debugScopesAllowed(scope: string, explicit: boolean): boolean {
+export function debugScopesAllowed(scope: string, explicit = false): boolean {
   if (explicit) return true;
   const value = process.env.FORGE_DEBUG ?? process.env.DEBUG;
   if (!value) return false;
