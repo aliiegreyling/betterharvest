@@ -40,7 +40,7 @@ Forge is now a chat-first harness. Running `forge` or `forge chat` opens an inte
 
 For Forge debugging, use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` in chat. Errors should remain user-friendly by default and include actionable next steps; verbose output may include stack traces and redacted adapter invocation details.
 
-Chat `/new` should behave as a guided project creation journey: collect setup details first, then in step mode pause before each agent phase for user guidance, `/skip`, or `/abort`.
+Chat `/new` is the default agentic SDLC team journey. It runs BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. Human approval gates are required after BA, architecture synthesis, QA, and infra unless explicitly disabled for local experiments with `--no-approval-gates`. Step mode still pauses before each agent phase for user guidance, `/skip`, or `/abort`. Use `forge work` or chat `/work` to iterate on an existing target project, defaulting to `./forge-out`, without recreating it.
 
 ## Engineering Standards
 

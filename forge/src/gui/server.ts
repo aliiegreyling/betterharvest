@@ -646,7 +646,7 @@ button[type="submit"] { background: #234438; border-color: #366653; }
 
 const CLIENT_JS = `
 const state = { selectedRunId: null, events: [], snapshot: null, stream: null };
-const phases = ["brief", "arch", "stories", "impl", "verify", "review"];
+const phases = ["ba", "tech_arch", "ux_design", "arch_synthesis", "stories", "dev", "qa", "infra", "review"];
 
 const $ = (id) => document.getElementById(id);
 
@@ -716,7 +716,7 @@ async function selectRun(runId) {
   state.events = [];
   if (state.stream) state.stream.close();
   state.stream = new EventSource("/api/runs/" + encodeURIComponent(runId) + "/stream");
-  for (const type of ["run_created", "plan_written", "phase_start", "cli_output", "cli_call", "phase_end", "checkpoint_saved", "run_done", "run_error"]) {
+  for (const type of ["run_created", "plan_written", "phase_start", "cli_output", "cli_call", "phase_end", "approval_requested", "approval_granted", "changes_requested", "approval_aborted", "checkpoint_saved", "run_done", "run_error"]) {
     state.stream.addEventListener(type, (event) => {
       state.events.push(JSON.parse(event.data));
       render();

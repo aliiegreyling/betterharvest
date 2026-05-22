@@ -8,8 +8,8 @@ Source: [forge/src/cli.ts](../../forge/src/cli.ts). Version: `0.3.0`.
 - `--skip-doctor` skips CLI availability checks (`new`, `plan`).
 - `--bmad` mirrors the run plan into `_bmad-output/planning-artifacts/forge-runs/<run-id>/`.
 - `--context-budget low|standard|deep` adjusts per-phase context budgeting (default `standard`).
-- `--model <id>` overrides the model for non-verification phases.
-- `--coder <model>` overrides specifically the impl phase (e.g. `codex`, `opus`).
+- `--model <id>` overrides the model for non-QA phases.
+- `--coder <model>` overrides specifically the dev phase (e.g. `codex`, `opus`).
 
 ## Commands
 
@@ -25,12 +25,13 @@ Plain text chats with the selected model and captures the text as the current re
 | `/help` | Show the full command list |
 | `/models` | Show model registry details |
 | `/set model <id\|auto>` | Set or clear the chat model override |
-| `/set coder <id\|auto>` | Set or clear the implementation model override |
+| `/set coder <id\|auto>` | Set or clear the development model override |
 | `/request <text>` | Capture an app/project request without calling a model |
 | `/plan [prompt]` | Build a dry-run routing plan |
 | `/new [prompt]` | Start the guided project journey |
+| `/work [request]` | Iterate on the existing target project |
 
-During guided `/new`, Forge prompts for request, target directory, context budget, planning model, implementation model, and run mode. Use `auto` for model prompts to keep the deterministic router in control.
+During guided `/new`, Forge prompts for request, target directory, context budget, planning model, development model, and run mode. Use `auto` for model prompts to keep the deterministic router in control.
 
 ### Build & plan
 
@@ -40,18 +41,21 @@ Build a new project from a natural-language prompt.
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--target-dir <dir>` | `./forge-out` | Where the generated project lands |
-| `--coder <model>` | — | Override impl-phase model |
-| `--model <id>` | — | Override non-verify phases |
+| `--coder <model>` | — | Override dev-phase model |
+| `--model <id>` | — | Override non-QA phases |
 | `--context-budget <low\|standard\|deep>` | `standard` | Context budget mode |
 | `--bmad` | off | Also write plan to `_bmad-output/.../forge-runs/<id>/` |
+| `--no-approval-gates` | off | Disable BA, architecture, QA, and infra sign-off gates for local experiments |
 | `--dry-run` | off | Print plan only, no execution |
 | `--skip-doctor` | off | Skip `claude`/`codex` availability check |
+
+`new` runs the SDLC team flow: BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. Approval gates pause after BA, architecture synthesis, QA/testing, and local infrastructure unless disabled.
 
 #### `forge plan <prompt>`
 Print the routing plan without executing. Same flags as `new` except always dry-run.
 
 #### `forge resume <run-id>`
-Resume a saved run plan from `~/.forge/runs/<id>/plan.json`.
+Resume a saved run plan from `~/.forge/runs/<id>/plan.json`. Forge skips completed checkpoints and continues from the first failed or missing phase.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
@@ -84,7 +88,20 @@ Print project context for a topic and indicate whether Serena semantic lookup is
 Write a BMAD scaffold-domain design artifact to `_bmad-output/planning-artifacts/forge-design/<domain>-design.md`. `<domain>` is free-text but the convention is one of `data | ux | backend | infra | frontend | deployment`.
 
 #### `forge work <request>`
-Create a brownfield work-plan artifact (currently a scaffold; the work-plan is the artifact, execution is roadmap).
+Run the SDLC team flow against an existing project, defaulting to `./forge-out`.
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--target-dir <dir>` | `./forge-out` | Existing project to modify |
+| `--coder <model>` | — | Override dev-phase model |
+| `--model <id>` | — | Override non-QA phases |
+| `--context-budget <low\|standard\|deep>` | `standard` | Context budget mode |
+| `--bmad` | off | Also write plan to `_bmad-output/.../forge-runs/<id>/` |
+| `--no-approval-gates` | off | Disable BA, architecture, QA, and infra sign-off gates for local experiments |
+| `--dry-run` | off | Print plan only, no execution |
+| `--skip-doctor` | off | Skip `claude`/`codex` availability check |
+
+`work` writes or updates `docs/CHANGE_REQUEST.md`, updates existing design/test/infra docs as needed, and instructs the dev agent to modify only the requested scope. It refuses to execute if the target directory does not exist; use `new` first or pass the correct `--target-dir`.
 
 ### Introspection
 
@@ -106,9 +123,9 @@ GUI controls intentionally mirror terminal concepts:
 | GUI Control | Terminal equivalent |
 | --- | --- |
 | `Plan` | `forge plan ...` / dry-run routing plan |
-| `Run` | `forge new ...` / full phase pipeline |
+| `Run` | `forge new ...` or `forge work ...` / full phase pipeline |
 | Planning model | `--model <id>` |
-| Impl model | `--coder <id>` |
+| Dev model | `--coder <id>` |
 | Context | `--context-budget <mode>` |
 
 The dashboard also includes a phase progress meter and app preview. `Start preview` detects the selected run's target directory, looks for `package.json`, runs the first available `dev`, `start`, or `preview` script, and embeds the local URL in the preview frame.

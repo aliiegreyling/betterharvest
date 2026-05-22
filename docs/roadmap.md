@@ -26,6 +26,14 @@
 - BMAD-compatible artifact writing under `_bmad-output/planning-artifacts/forge-runs/<id>/`, `forge-context/`, `forge-design/`.
 - Portable formatter so artifacts do not leak local paths or secrets.
 
+### Agentic SDLC team slice
+- `/new` and `new` now use a traditional SDLC team flow: BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review.
+- `/work` and `work` run the same gated SDLC team against an existing target project, defaulting to `./forge-out`, and scope agents to the requested change instead of recreating the app.
+- Human approval gates after BA, architecture synthesis, QA/testing, and local infrastructure.
+- Approval decisions and change requests are recorded in the run audit log; change requests rerun the producing phase with reviewer guidance.
+- Architecture output expects Mermaid ERD, flow, and class/component diagrams where relevant.
+- Infra remains local-first: Aspire or Docker Compose for local validation, no cloud provisioning.
+
 ## Next (v0.4 — context-aware harness, completion)
 
 Goal: turn the placeholder commands into real execution.
@@ -33,14 +41,15 @@ Goal: turn the placeholder commands into real execution.
 - **Live MCP client.** Actually spawn MCP servers and call their tools (not just read config).
 - **Serena tool calls.** Wire `find_symbol`, `find_referencing_symbols`, `read_memory`, `write_memory`, diagnostics into the sub-agent tool surface.
 - **Context broker.** Token-aware retrieval with rationale ("included file X because of symbol Y").
-- **Tool approval / risk policy.** Per-tool risk level, user confirmation gate for high-risk actions.
-- **Brownfield execution.** `forge work <request>` should plan + inspect + implement + verify + review on the current repo, not just write an artifact.
+- **Tool approval / risk policy.** Per-tool risk level, user confirmation gate for high-risk actions. The SDLC role approval gates are in place; live MCP/cloud tool approval still needs policy work.
+- **Brownfield execution depth.** `forge work <request>` now executes against an existing target project; live Serena/MCP-backed code inspection still needs the v0.4 context broker.
 
 ## Later (v0.5+)
 
 - **Provider-agnostic model clients** beyond Anthropic + Codex CLI (OpenAI direct, local models, others as needed).
 - **Local GUI observability surface** (`forge gui`) — watch request understanding, model routing, phase progress, checkpoints, logs, and generated app preview from the same run artifacts the CLI writes.
 - **Deployment planning** (`forge deploy plan`) — produce deployment topology and handoff to a deployment MCP.
+- **External approval integration** — map SDLC sign-offs to GitHub, Azure DevOps, or another review system.
 - **Approval-gated deployment execution.**
 - **Full scaffold domains** as first-class subcommands: `forge design data|ux|backend|infra|frontend|deployment` should each produce executable plans, not just placeholder artifacts.
 - **Daemon / MCP runtime** — expose Forge itself as an MCP server so other agents can drive it.

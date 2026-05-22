@@ -108,9 +108,14 @@ export async function runSubAgent(
     }
     const next = escalate(modelId);
     if (!next) {
+      const detail = [
+        `Exit ${res.exitCode}. Exhausted escalation ladder at ${modelId}.`,
+        res.stderr ? `stderr: ${res.stderr.slice(-800)}` : undefined,
+        res.finalText ? `output: ${res.finalText.slice(-800)}` : undefined,
+      ].filter((line): line is string => line !== undefined).join("\n");
       return {
         ok: false,
-        output: `Exhausted escalation ladder at ${modelId}`,
+        output: detail,
         modelUsed: modelId,
         costUsd: res.costUsd ?? 0,
         durationMs: res.durationMs,

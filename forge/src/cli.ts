@@ -9,7 +9,7 @@ import { checkCli } from "./util/check-cli.js";
 import { listAdapters } from "./cli-adapters/index.js";
 import { detectProjectContext, formatProjectContext } from "./project/context.js";
 import { checkMcpHealth, discoverMcpServers } from "./mcp/registry.js";
-import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "./project/commands.js";
+import { buildStatusText, createDesignArtifact, refreshContext } from "./project/commands.js";
 import { startChat } from "./chat/session.js";
 import { debugLog, printUserError, verboseEnabled } from "./util/diagnostics.js";
 import { startGuiServer } from "./gui/server.js";
@@ -33,15 +33,16 @@ program
   .description("Build a new project from a prompt")
   .argument("<prompt>", "natural-language description of the project to build")
   .option("--target-dir <dir>", "where to write the generated project", "./forge-out")
-  .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
-  .option("--model <id>", "override model for non-verification phases")
+  .option("--coder <model>", "override the dev phase model (e.g. codex, opus)")
+  .option("--model <id>", "override model for non-QA phases")
   .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
   .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
+  .option("--no-approval-gates", "disable human approval gates for local experiments")
   .option("--dry-run", "print plan without executing", false)
   .option("--skip-doctor", "skip CLI availability check", false)
   .action(async (
     prompt: string,
-    opts: { targetDir: string; coder?: string; model?: string; contextBudget: string; bmad: boolean; dryRun: boolean; skipDoctor: boolean }
+    opts: { targetDir: string; coder?: string; model?: string; contextBudget: string; bmad: boolean; approvalGates: boolean; dryRun: boolean; skipDoctor: boolean }
   ) => {
     await runCommand("new", async () => {
       if (!opts.skipDoctor) await doctor(currentVerbose());
@@ -56,6 +57,7 @@ program
         modelOverride: opts.model,
         contextBudget: parseContextBudget(opts.contextBudget),
         bmadOutput: opts.bmad,
+        approvalGates: opts.approvalGates,
       });
     });
   });
@@ -65,8 +67,8 @@ program
   .description("Print routing plan for a prompt without executing")
   .argument("<prompt>")
   .option("--target-dir <dir>", "intended project dir", "./forge-out")
-  .option("--coder <model>", "override the impl phase model (e.g. codex, opus)")
-  .option("--model <id>", "override model for non-verification phases")
+  .option("--coder <model>", "override the dev phase model (e.g. codex, opus)")
+  .option("--model <id>", "override model for non-QA phases")
   .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
   .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
   .option("--skip-doctor", "skip CLI availability check", false)
@@ -204,12 +206,36 @@ program
 
 program
   .command("work")
-  .description("Create a brownfield work plan artifact for an existing project")
+  .description("Iterate on an existing project from a change request")
   .argument("<request>")
-  .action((request: string) => {
-    runSyncCommand("work", () => {
-      const file = createBrownfieldWorkPlan(request);
-      console.log(chalk.green(`Brownfield work plan written: ${file}`));
+  .option("--target-dir <dir>", "existing project dir to modify", "./forge-out")
+  .option("--coder <model>", "override the dev phase model (e.g. codex, opus)")
+  .option("--model <id>", "override model for non-QA phases")
+  .option("--context-budget <mode>", "context budget: low, standard, deep", "standard")
+  .option("--bmad", "write plan metadata to BMAD planning artifacts", false)
+  .option("--no-approval-gates", "disable human approval gates for local experiments")
+  .option("--dry-run", "print plan without executing", false)
+  .option("--skip-doctor", "skip CLI availability check", false)
+  .action(async (
+    request: string,
+    opts: { targetDir: string; coder?: string; model?: string; contextBudget: string; bmad: boolean; approvalGates: boolean; dryRun: boolean; skipDoctor: boolean }
+  ) => {
+    await runCommand("work", async () => {
+      if (!opts.skipDoctor) await doctor(currentVerbose());
+      validateModel(opts.model);
+      validateModel(opts.coder);
+      debugLog("cli", "running work", summarizeOptions(request, opts), currentVerbose());
+      await runForge({
+        prompt: request,
+        targetDir: path.resolve(opts.targetDir),
+        mode: "work",
+        coder: opts.coder,
+        dryRun: opts.dryRun,
+        modelOverride: opts.model,
+        contextBudget: parseContextBudget(opts.contextBudget),
+        bmadOutput: opts.bmad,
+        approvalGates: opts.approvalGates,
+      });
     });
   });
 

@@ -36,13 +36,16 @@ One JSON object per line. Common fields:
 | Field | Meaning |
 | --- | --- |
 | `ts` | ISO timestamp |
-| `kind` | Event type — e.g. `cli_call`, `tool_call`, `phase_start`, `phase_done`, `escalate` |
+| `kind` | Event type — e.g. `cli_call`, `phase_start`, `phase_end`, `approval_requested`, `approval_granted`, `changes_requested`, `approval_aborted` |
 | `nodeId` | Phase node identifier |
 | `modelId` | Model used for this call (when applicable) |
 | `durationMs` | Wall-clock duration |
 | `tokensIn` / `tokensOut` | CLI-reported usage |
 | `costUsd` | CLI-reported cost (Claude only; Codex CLI typically omits) |
 | `message` | Free-text status |
+| `approvalGateId` | Sign-off gate identifier when the event records a human approval step |
+| `approverRole` | Expected human role for the approval gate |
+| `revision` | Revision cycle number for phase reruns after requested changes |
 
 ## CLI for inspecting runs
 
@@ -62,7 +65,13 @@ TOTAL: $0.0857
 ```
 
 ### `forge resume <run-id>`
-Re-runs from `plan.json`. Edit the plan first to override routing before resuming.
+Continues from the first phase whose checkpoint is missing or failed. Completed phases are skipped, so a run that fails in development resumes from development rather than re-running BA, architecture, and stories.
+
+```bash
+forge resume <run-id> --target-dir ./forge-out
+```
+
+The resumed run uses the existing `plan.json`. Edit the plan first if you want to override routing before resuming.
 
 ## Editing a plan before resume
 
@@ -71,7 +80,7 @@ Re-runs from `plan.json`. Edit the plan first to override routing before resumin
 cat ~/.forge/runs/<id>/plan.json | jq .
 
 # 2. Edit a node's modelId
-# (e.g. force impl to opus instead of sonnet)
+# (e.g. force dev to opus instead of codex)
 
 # 3. Resume
 forge resume <id> --target-dir ./forge-out

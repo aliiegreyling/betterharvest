@@ -51,6 +51,7 @@ function renderPlan(plan: Plan): string {
   return [
     `# Forge Plan: ${plan.runId}`,
     "",
+    `Mode: ${plan.mode ?? "new"}`,
     `Prompt: ${plan.prompt}`,
     `Context budget: ${plan.contextBudget}`,
     plan.modelOverride ? `Model override: ${plan.modelOverride}` : undefined,
@@ -63,10 +64,10 @@ function renderPlan(plan: Plan): string {
     "",
     "## Nodes",
     "",
-    "| Phase | Role | Model | Goal |",
-    "| --- | --- | --- | --- |",
+    "| Phase | Role | Model | Approval Gate | Goal |",
+    "| --- | --- | --- | --- | --- |",
     ...plan.nodes.map((n) =>
-      `| ${n.phase} | ${n.role} | ${n.modelId} | ${n.goal.replace(/\|/g, "\\|")} |`
+      `| ${n.phase} | ${n.role} | ${n.modelId} | ${n.approvalGate?.label ?? ""} | ${n.goal.replace(/\|/g, "\\|")} |`
     ),
     "",
   ].filter((line): line is string => line !== undefined).join("\n");

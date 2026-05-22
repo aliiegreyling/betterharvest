@@ -11,7 +11,7 @@ Source: [forge/src/models/registry.ts](../../forge/src/models/registry.ts).
 | `haiku` | `claude` | `haiku` | classification, coding | fast | Trivial edits, summarization, classification |
 | `sonnet` | `claude` | `sonnet` | coding, planning, review | medium | Default coding tier |
 | `opus` | `claude` | `opus` | reasoning, planning, coding, long-context | slow | Architecture, ambiguous specs, hard debugging |
-| `codex` | `codex` | `gpt-5-codex` | coding | medium | OpenAI Codex CLI for specialist impl |
+| `codex` | `codex` | `gpt-5-codex` | coding | medium | OpenAI Codex CLI for specialist development |
 
 Inspect from the CLI: `forge models`.
 
@@ -22,31 +22,34 @@ Source: [forge/src/agents/router.ts](../../forge/src/agents/router.ts).
 | Phase | Default | Notes |
 | --- | --- | --- |
 | `classify` | `haiku` | Always (cheap classification). |
-| `brief` | `sonnet` | → `haiku` if complexity = S. → `opus` if ambiguity > 0.7. |
-| `arch` | `opus` | → `opus` if ambiguity > 0.7 (already default). |
+| `ba` | `sonnet` | → `haiku` if complexity = S. → `opus` if ambiguity > 0.7. |
+| `tech_arch` | `opus` | Technical system design. |
+| `ux_design` | `sonnet` | → `opus` if ambiguity > 0.7. |
+| `arch_synthesis` | `opus` | Final TDD and Mermaid diagrams. |
 | `stories` | `sonnet` | → `haiku` if complexity = S. |
-| `impl` | `sonnet` | → `opus` if complexity = XL. Escalates on failure. |
-| `verify` | `sonnet` | — |
+| `dev` | `codex` when available, otherwise `sonnet` | → `opus` if complexity = XL. Escalates on failure. |
+| `qa` | `sonnet` | Test cases plus happy-path and negative-flow tests. |
+| `infra` | `sonnet` | → `opus` for L/XL systems. Local Aspire or Docker Compose only. |
 | `review` | `sonnet` | — |
 
 ## Overrides
 
-### `--model <id>` (global, non-verify)
-Applied to every phase **except** `verify`. Lets you pin everything to a specific model without losing the cheap verification step.
+### `--model <id>` (global, non-QA)
+Applied to every phase **except** `qa`. Lets you pin planning and development while preserving the independent QA pass.
 
-### `--coder <model>` (impl phase only)
-Applied only to `impl`. Use this to route impl to Codex while keeping `claude` for planning phases.
+### `--coder <model>` (dev phase only)
+Applied only to `dev`. Use this to route development to Codex or Opus while keeping `claude` for planning phases.
 
 ### Per-classification adjustments
 The router checks `complexity` and `ambiguityScore` from the classifier output and adjusts the default per phase. See the table above.
 
 ## Escalation ladder
 
-`haiku → sonnet → opus`.
+`haiku → sonnet → opus`. Codex failures fall back to `sonnet`, then continue up the Claude ladder if needed.
 
-When a phase node exits non-zero, the runner retries one rung up the ladder. Impl has escalation enabled by default; other phases do not escalate to avoid runaway cost on truly-stuck plans.
+When a phase node exits non-zero, the runner retries one rung up the ladder for development, QA, and infra. Planning phases do not escalate automatically to avoid runaway cost on truly-stuck plans.
 
-Codex sits outside the ladder — it's a sibling tier for impl, not an escalation target.
+Codex is a sibling development tier, so Forge does not escalate into Codex; it only falls back out of Codex when a Codex-routed dev phase fails.
 
 ## How to add a model
 

@@ -1,6 +1,6 @@
 # forge
 
-Chat-first agentic CLI that builds or maintains projects from a prompt with BMAD-aware planning context, MCP discovery, and dynamic routing across Claude Code and OpenAI Codex CLI adapters.
+Chat-first agentic SDLC CLI that builds or maintains projects from a prompt with BMAD-aware planning context, MCP discovery, human sign-off gates, and dynamic routing across Claude Code and OpenAI Codex CLI adapters.
 
 Forge shells out to CLIs you are already authenticated with. It does not require application API keys in its own configuration.
 
@@ -50,7 +50,7 @@ Plain text chats directly with the selected model, using compact project context
 
 Use `/request <text>` to capture a project idea without spending model tokens. Use plain text or `/ask <message>` when you want a model response.
 
-On startup, chat prints the high-value commands and the available model ids. The interactive `/new` journey also prompts for planning and implementation model choices; use `auto` to keep Forge's router-owned defaults.
+On startup, chat prints the high-value commands and the available model ids. The interactive `/new` journey also prompts for planning and development model choices; use `auto` to keep Forge's router-owned defaults.
 
 `/new` is guided in chat. In an interactive terminal it asks for the project request, target directory, context budget, and run mode before starting agent work:
 
@@ -58,6 +58,24 @@ On startup, chat prints the high-value commands and the available model ids. The
 - `auto` runs all phases without additional prompts.
 - `plan` classifies and prints the route only.
 - `cancel` exits before any model work starts.
+
+The default `/new` and `new` workflow is an SDLC team journey:
+
+```text
+BA requirements -> technical architecture -> UI/UX design -> architecture synthesis
+-> stories -> development -> QA/testing -> local infrastructure -> review
+```
+
+Approval gates pause after BA, architecture synthesis, QA/testing, and local infrastructure. The approver can approve, request changes, or abort. Use `--no-approval-gates` only for local experiments.
+
+Use `/work` or `forge work` to iterate on an existing project, defaulting to `./forge-out`:
+
+```bash
+node dist/cli.js work "add password reset to the auth flow"
+node dist/cli.js work "tighten the dashboard mobile layout" --target-dir ./forge-out --dry-run
+```
+
+Work mode uses the same SDLC team and approval gates, but writes `docs/CHANGE_REQUEST.md`, updates existing design/test/infra artifacts, and tells the dev agent to modify only the requested scope. It refuses to execute if the target project directory does not exist.
 
 ## Diagnostics
 
@@ -92,6 +110,8 @@ node dist/cli.js resume <run-id> --target-dir ../forge-out
 node dist/cli.js gui
 ```
 
+`resume` continues from the first failed or missing checkpoint. If a run fails during development, it skips the completed BA/design/story phases and retries development with the existing plan.
+
 Context and planning commands:
 
 ```bash
@@ -101,7 +121,7 @@ node dist/cli.js mcp list
 node dist/cli.js mcp health
 node dist/cli.js inspect "auth flow"
 node dist/cli.js design data "domain model"
-node dist/cli.js work "add feature X"
+node dist/cli.js work "add feature X to the existing forge-out project"
 ```
 
 Local GUI:
@@ -130,10 +150,10 @@ node dist/cli.js new "build a CLI todo app" --coder codex --context-budget deep 
 
 1. **Chat shell** opens by default and keeps a short conversation history plus the latest captured project request.
 2. **Direct chat** sends plain text to the selected model with compact project context and no tool permissions.
-3. **Slash commands** dispatch project journeys such as `/plan`, `/new`, `/design`, `/work`, `/mcp`, and `/context`.
+3. **Slash commands** dispatch project journeys such as `/plan`, `/new`, `/work`, `/design`, `/mcp`, and `/context`.
 4. **Classifier** runs Claude Haiku for `/plan` and `/new` to tag the prompt with project type, complexity, estimated files, ambiguity, stack hints, and UI requirements.
-5. **Orchestrator** builds a 6-phase plan: brief, architecture, stories, implementation, verification, and review.
-6. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-verification overrides and `--coder` for implementation-only overrides.
+5. **Orchestrator** builds the SDLC team plan: BA, technical architecture, UI/UX, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. In work mode, prompts are scoped to an existing project change request.
+6. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-QA overrides and `--coder` for development-only overrides.
 7. **CLI adapters** invoke Claude Code or Codex with phase-scoped tool permissions and the target directory as the working directory.
 8. **Audit and checkpoints** write run metadata under `~/.forge/runs/<id>/`.
 9. **GUI dashboard** reads the same run metadata and streams live events for GUI-started runs.
@@ -152,12 +172,15 @@ Forge detects repository context and surfaces BMAD, Serena, MCP, and package-man
 | Phase | Default | Notes |
 | --- | --- | --- |
 | classify | haiku | Always classifier-owned |
-| brief | sonnet | Uses haiku for small scopes; opus for high ambiguity |
-| arch | opus | Architecture-heavy by default |
+| ba | sonnet | Uses haiku for small scopes; opus for high ambiguity |
+| tech_arch | opus | Technical system design |
+| ux_design | sonnet | Uses opus for high ambiguity |
+| arch_synthesis | opus | Final TDD and Mermaid diagrams |
 | stories | sonnet | Uses haiku for small scopes |
-| impl | sonnet | Uses opus for XL complexity; can be overridden with `--coder` |
-| verify | sonnet | Verification ignores broad `--model` overrides |
-| review | sonnet | Final review and documentation pass |
+| dev | codex when available, otherwise sonnet | Uses opus for XL complexity; can be overridden with `--coder` |
+| qa | sonnet | Test cases plus happy-path and negative-flow tests |
+| infra | sonnet | Uses opus for larger systems; local Aspire or Docker Compose only |
+| review | sonnet | Final README and readiness pass |
 
 ## Run Artifacts
 

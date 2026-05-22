@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { createInterface, Interface } from "node:readline";
 import path from "node:path";
-import { PhaseDecision, PhasePrompt, runForge } from "../runner.js";
+import { ApprovalDecision, ApprovalPrompt, PhaseDecision, PhasePrompt, runForge } from "../runner.js";
 import { ContextBudget } from "../types.js";
 import { formatModelIdList, getModel, MODELS } from "../models/registry.js";
 import { readAudit, readPlan, listRuns } from "../run/state.js";
@@ -9,7 +9,7 @@ import { checkCli } from "../util/check-cli.js";
 import { listAdapters } from "../cli-adapters/index.js";
 import { detectProjectContext, formatProjectContext } from "../project/context.js";
 import { checkMcpHealth, discoverMcpServers } from "../mcp/registry.js";
-import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "../project/commands.js";
+import { buildStatusText, createDesignArtifact, refreshContext } from "../project/commands.js";
 import { runCli } from "../agents/cli-runner.js";
 import { debugLog, printUserError, verboseEnabled } from "../util/diagnostics.js";
 
@@ -42,6 +42,7 @@ interface FlowArgs {
   skipDoctor: boolean;
   dryRun: boolean;
   confirmPhases: boolean;
+  approvalGates: boolean;
   model?: string;
   coder?: string;
 }
@@ -71,7 +72,7 @@ const HELP = [
   "  /mcp [list|health]             Inspect MCP configuration",
   "  /inspect <topic>               Inspect project context for a topic",
   "  /design <domain> <prompt>      Write a BMAD design artifact",
-  "  /work [request]                Write a brownfield work-plan artifact",
+  "  /work [request]                Iterate on the existing target project",
   "  /models                       List model registry",
   "  /runs                         List recent runs",
   "  /log <run-id>                 Print run audit log",
@@ -81,7 +82,7 @@ const HELP = [
   "Use /request when you only want to capture a project idea without spending tokens.",
   `Models: ${formatModelIdList()} (use /models for details, /set model auto to use the default).`,
   "/new starts with setup prompts in an interactive terminal. Choose step mode to add guidance before each agent phase.",
-  "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor, --auto, --step, --plan-only.",
+  "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor, --auto, --step, --plan-only, --no-approval-gates.",
 ].join("\n");
 
 function printChatWelcome(session: ChatSession): void {
@@ -209,7 +210,7 @@ async function handleChatLine(line: string, session: ChatSession, runtime: ChatR
       runDesignCommand(args);
       return true;
     case "work":
-      runWorkCommand(session, args);
+      await runWorkCommand(session, args, runtime);
       return true;
     case "models":
       showModels();
@@ -372,6 +373,8 @@ async function runNewCommand(session: ChatSession, args: string[], runtime: Chat
     contextBudget: flow.contextBudget,
     bmadOutput: flow.bmad,
     beforePhase: flow.confirmPhases ? (phase) => askPhaseDecision(runtime, phase) : undefined,
+    approvalGates: flow.approvalGates,
+    requestApproval: flow.approvalGates ? (approval) => askApprovalDecision(runtime, approval) : undefined,
   });
 }
 
@@ -393,7 +396,7 @@ async function prepareNewJourney(
   const contextBudget = await askWithDefault(runtime, "Context budget (low|standard|deep)", flow.contextBudget);
   console.log(chalk.dim(`Available models: ${formatModelIdList()} (use auto for router defaults).`));
   const model = await askWithDefault(runtime, `Planning model (auto|${formatModelIdList("|")})`, flow.model ?? "auto");
-  const coder = await askWithDefault(runtime, `Implementation model (auto|${formatModelIdList("|")})`, flow.coder ?? "auto");
+  const coder = await askWithDefault(runtime, `Development model (auto|${formatModelIdList("|")})`, flow.coder ?? "auto");
   const mode = (await askWithDefault(runtime, "Run mode (step|auto|plan|cancel)", "step")).toLowerCase();
 
   if (mode === "cancel" || mode === "c") throw new Error("Project creation cancelled before execution.");
@@ -409,6 +412,7 @@ async function prepareNewJourney(
     coder: parseOptionalModel(coder),
     dryRun: mode === "plan",
     confirmPhases: mode === "step",
+    approvalGates: flow.approvalGates,
   };
 
   if (session.defaults.bmad) {
@@ -429,7 +433,7 @@ async function prepareNewJourney(
 
 async function askPhaseDecision(runtime: ChatRuntime, phase: PhasePrompt): Promise<PhaseDecision> {
   console.log(chalk.bold(`\n${phase.name} setup`));
-  console.log(chalk.dim(`Phase ${phase.idx}/7 · role=${phase.node.role} · model=${phase.node.modelId}`));
+  console.log(chalk.dim(`Phase ${phase.idx}/10 · role=${phase.node.role} · model=${phase.node.modelId}`));
   console.log(chalk.dim("Press Enter to run, type guidance for this phase, or use /skip or /abort."));
   const answer = await runtime.ask(`${phase.name}> `);
   const normalized = answer.trim();
@@ -438,6 +442,28 @@ async function askPhaseDecision(runtime: ChatRuntime, phase: PhasePrompt): Promi
   if (normalized === "/skip") return { action: "skip" };
   if (normalized === "/abort" || normalized === "/cancel") return { action: "abort" };
   return { action: "run", note: normalized };
+}
+
+async function askApprovalDecision(runtime: ChatRuntime, approval: ApprovalPrompt): Promise<ApprovalDecision> {
+  console.log(chalk.bold(`\n${approval.gateLabel}`));
+  console.log(chalk.dim(`Approver: ${approval.approverRole} · revision ${approval.revision}/${approval.maxRevisionCycles}`));
+  if (approval.expectedArtifacts.length > 0) {
+    console.log(chalk.dim(`Review artifacts: ${approval.expectedArtifacts.join(", ")}`));
+  }
+  console.log(chalk.dim("Type approve, changes, or abort. Any other non-empty text is treated as a change request."));
+
+  while (true) {
+    const answer = (await runtime.ask(`${approval.approverRole}> `)).trim();
+    const normalized = answer.toLowerCase();
+    if (["approve", "a"].includes(normalized)) return { action: "approve" };
+    if (["abort", "cancel", "q"].includes(normalized)) return { action: "abort" };
+    if (["changes", "change", "c", "request-changes"].includes(normalized)) {
+      const note = (await runtime.ask("Change request: ")).trim();
+      return { action: "changes", note };
+    }
+    if (answer) return { action: "changes", note: answer };
+    console.log(chalk.yellow("Expected approve, changes, or abort."));
+  }
 }
 
 async function askWithDefault(runtime: ChatRuntime, label: string, defaultValue: string): Promise<string> {
@@ -462,6 +488,7 @@ function parseFlowArgs(session: ChatSession, args: string[], forceDryRun: boolea
     skipDoctor: session.defaults.skipDoctor,
     dryRun: forceDryRun,
     confirmPhases: false,
+    approvalGates: true,
     model: session.defaults.model,
     coder: session.defaults.coder,
   };
@@ -479,6 +506,8 @@ function parseFlowArgs(session: ChatSession, args: string[], forceDryRun: boolea
     else if (arg === "--doctor") result.skipDoctor = false;
     else if (arg === "--dry-run") result.dryRun = true;
     else if (arg === "--plan-only") result.dryRun = true;
+    else if (arg === "--no-approval-gates") result.approvalGates = false;
+    else if (arg === "--approval-gates") result.approvalGates = true;
     else if (arg === "--step") result.confirmPhases = true;
     else if (arg === "--auto" || arg === "--yes") result.confirmPhases = false;
     else if (arg.startsWith("--")) throw new Error(`Unknown flag: ${arg}`);
@@ -617,12 +646,27 @@ function runDesignCommand(args: string[]): void {
   console.log(chalk.green(`Design artifact written: ${file}`));
 }
 
-function runWorkCommand(session: ChatSession, args: string[]): void {
-  const request = args.join(" ").trim() || session.lastPrompt;
-  if (!request) throw new Error("No work request captured. Type a request first or pass one after /work.");
+async function runWorkCommand(session: ChatSession, args: string[], runtime: ChatRuntime): Promise<void> {
+  const flow = parseFlowArgs(session, args, false);
+  const request = resolvePrompt(session, flow.prompt);
   session.lastPrompt = request;
-  const file = createBrownfieldWorkPlan(request);
-  console.log(chalk.green(`Brownfield work plan written: ${file}`));
+  debugLog("chat", "running /work", summarizeFlow(flow, request), session.defaults.debug);
+  if (!flow.skipDoctor) await doctor();
+  validateModel(flow.model);
+  validateModel(flow.coder);
+  await runForge({
+    prompt: request,
+    targetDir: path.resolve(flow.targetDir),
+    mode: "work",
+    coder: flow.coder,
+    dryRun: flow.dryRun,
+    modelOverride: flow.model,
+    contextBudget: flow.contextBudget,
+    bmadOutput: flow.bmad,
+    beforePhase: flow.confirmPhases ? (phase) => askPhaseDecision(runtime, phase) : undefined,
+    approvalGates: flow.approvalGates,
+    requestApproval: flow.approvalGates ? (approval) => askApprovalDecision(runtime, approval) : undefined,
+  });
 }
 
 function showSession(session: ChatSession): void {
@@ -730,6 +774,7 @@ function summarizeFlow(flow: FlowArgs, prompt: string): object {
     skipDoctor: flow.skipDoctor,
     dryRun: flow.dryRun,
     confirmPhases: flow.confirmPhases,
+    approvalGates: flow.approvalGates,
     model: flow.model ?? "(auto)",
     coder: flow.coder ?? "(auto)",
     promptLength: prompt.length,

@@ -24,7 +24,7 @@ This repository is both a working environment and the home of an evolving produc
 | --- | --- | --- |
 | **BMAD Method v6.7.1** | Structured product-development framework (brief → PRD → architecture → stories → delivery) | `_bmad/`, skills like `bmad-help`, `bmad-prd` |
 | **Serena MCP** | Semantic code intelligence (symbols, references, memories, diagnostics) | `.serena/project.yml`, `.serena/serena.sh` |
-| **Forge CLI** | Headless agentic CLI that shells out to `claude` and `codex` with per-phase model routing | [forge/](forge/README.md) |
+| **Forge CLI** | Chat-first agentic SDLC team that shells out to `claude` and `codex` with per-role model routing and human sign-off gates | [forge/](forge/README.md) |
 | **Agent guidance** | Keeps every agent (Claude Code, Codex, Copilot) aligned on conventions | [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md), [CODEX.md](CODEX.md) |
 | **Planning artifacts** | All product/architecture/design output from BMAD + Forge | [_bmad-output/planning-artifacts/](_bmad-output/planning-artifacts/) |
 | **Durable docs** | Long-lived project knowledge that survives sessions | [docs/](docs/README.md) |
@@ -81,7 +81,9 @@ See: [docs/serena/README.md](docs/serena/README.md)
 
 ### Forge — the agentic CLI we're building
 
-Forge is the executable harness. v0.3 today; v0.2+ context-awareness slice already merged. It does **not** require an `ANTHROPIC_API_KEY` — it shells out to the `claude` and `codex` CLIs you already authenticated locally and routes per-phase across Haiku / Sonnet / Opus / Codex.
+Forge is the executable harness. It does **not** require an `ANTHROPIC_API_KEY` — it shells out to the `claude` and `codex` CLIs you already authenticated locally and routes per SDLC role across Haiku / Sonnet / Opus / Codex.
+
+`forge new` and chat `/new` now run a traditional SDLC team flow: BA requirements → technical architecture → UI/UX design → architecture synthesis → stories → development → QA/testing → local infrastructure → review. Human approval gates are required after BA, architecture synthesis, QA, and infra unless explicitly disabled for local experiments. `forge work` and chat `/work` run the same gated flow against an existing target project, defaulting to `./forge-out`, for iterative change requests.
 
 See: [docs/forge/README.md](docs/forge/README.md)
 

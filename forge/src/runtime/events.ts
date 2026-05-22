@@ -7,6 +7,10 @@ export type ForgeRunEventType =
   | "cli_output"
   | "cli_call"
   | "phase_end"
+  | "approval_requested"
+  | "approval_granted"
+  | "changes_requested"
+  | "approval_aborted"
   | "checkpoint_saved"
   | "run_done"
   | "run_error";

@@ -73,13 +73,14 @@ The Forge CLI is the **active component** — the thing that runs.
 1. **Doctor** — verify `claude` (required) and `codex` (optional) CLIs are present.
 2. **Context detect** — Git root, branch, BMAD presence, Serena presence, package manager.
 3. **Classify** — Haiku tags the prompt with `{project_type, complexity (S/M/L/XL), est_files, requires_ui, stack_hint, ambiguity_score, summary}`.
-4. **Plan** — Orchestrator emits a six-phase plan: `brief → arch → stories → impl → verify → review`. Each node has `{role, modelId, goal, budget, tools}`.
+4. **Plan** — Orchestrator emits the SDLC team plan: `ba → tech_arch → ux_design → arch_synthesis → stories → dev → qa → infra → review`. Each node has `{role, modelId, goal, inputs, tools}` and some nodes carry approval-gate metadata.
 5. **Route** — Router applies deterministic rules with overrides for complexity and ambiguity. See [forge/routing-and-models.md](forge/routing-and-models.md).
 6. **Optional `--bmad`** — write the plan as a BMAD-compatible artifact under `_bmad-output/planning-artifacts/forge-runs/<run-id>/`.
 7. **Execute** — for each phase node:
    - The sub-agent shells the chosen CLI adapter (`claude` or `codex`) with phase-scoped allowed tools and the target directory as cwd.
    - The native CLI runs its own tool loop, edits files, runs commands.
-   - On non-zero exit, the runner escalates one rung up the ladder (haiku → sonnet → opus). Impl has escalation enabled by default.
+   - On non-zero exit, the runner escalates one rung up the ladder (haiku → sonnet → opus). Development, QA, and infra have escalation enabled by default.
+   - After BA, architecture synthesis, QA, and infra, Forge requests human sign-off. Approvers can approve, request changes, or abort; change requests rerun the producing phase with the reviewer note.
    - Every CLI call writes a JSONL event to `~/.forge/runs/<id>/audit.jsonl`.
 8. **Persist** — `plan.json`, `audit.jsonl`, `checkpoints/<phase>.json` under the run directory. Target project lands in `--target-dir`.
 
@@ -115,7 +116,7 @@ Tracked in the brief and addendum:
 - Should Forge stay the product name or become the implementation codename?
 - Which model providers after Anthropic?
 - Pure CLI vs. daemon/MCP runtime later?
-- How are user approvals represented for risky tool calls?
+- How should Forge integrate approval gates with GitHub or Azure DevOps later?
 - Where does project memory live — repo files, Serena memories, or a Forge-local store?
 - How much of BMAD is invoked directly vs. mirrored as Forge-native commands?
 

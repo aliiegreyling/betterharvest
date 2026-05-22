@@ -4,14 +4,18 @@ export type Complexity = "S" | "M" | "L" | "XL";
 
 export type Phase =
   | "classify"
-  | "brief"
-  | "arch"
+  | "ba"
+  | "tech_arch"
+  | "ux_design"
+  | "arch_synthesis"
   | "stories"
-  | "impl"
-  | "verify"
+  | "dev"
+  | "qa"
+  | "infra"
   | "review";
 
 export type ContextBudget = "low" | "standard" | "deep";
+export type RunMode = "new" | "work";
 
 export type Strength =
   | "classification"
@@ -50,6 +54,15 @@ export interface PlanNode {
   goal: string;
   inputs: string[];
   allowedTools: string[];
+  approvalGate?: ApprovalGate;
+  expectedArtifacts?: string[];
+}
+
+export interface ApprovalGate {
+  id: string;
+  label: string;
+  approverRole: string;
+  maxRevisionCycles: number;
 }
 
 export interface ProjectContext {
@@ -86,6 +99,7 @@ export interface McpHealth {
 export interface Plan {
   runId: string;
   createdAt: string;
+  mode: RunMode;
   prompt: string;
   targetDir?: string;
   classification: Classification;
@@ -102,7 +116,17 @@ export interface AuditEvent {
   agent?: string;
   modelId?: string;
   cli?: CliKind;
-  kind: "cli_call" | "phase_start" | "phase_end" | "cli_output" | "error" | "info";
+  kind:
+    | "cli_call"
+    | "phase_start"
+    | "phase_end"
+    | "cli_output"
+    | "approval_requested"
+    | "approval_granted"
+    | "changes_requested"
+    | "approval_aborted"
+    | "error"
+    | "info";
   durationMs?: number;
   exitCode?: number;
   costUsd?: number;
@@ -110,6 +134,9 @@ export interface AuditEvent {
   tokensOut?: number;
   ok?: boolean;
   message?: string;
+  approvalGateId?: string;
+  approverRole?: string;
+  revision?: number;
 }
 
 export interface CliResult {
@@ -128,6 +155,7 @@ export interface RunContext {
   runId: string;
   runDir: string;
   targetDir: string;
+  mode: RunMode;
   estCostUsd: number;
   projectContext: ProjectContext;
   contextBudget: ContextBudget;

@@ -13,7 +13,7 @@ forge/src/
 ├── types.ts                # Shared types: Plan, PlanNode, ProjectContext, McpServerConfig, etc.
 ├── agents/
 │   ├── classifier.ts       # Haiku-driven prompt classification
-│   ├── orchestrator.ts     # Builds the six-phase plan
+│   ├── orchestrator.ts     # Builds the SDLC team plan
 │   ├── router.ts           # pickModel(), escalate(), annotateRouting()
 │   ├── sdlc.ts             # Phase definitions, default budgets, allowed tools
 │   ├── sub-agent.ts        # Executes one phase node
@@ -68,6 +68,10 @@ cli.ts (new action)
        │     ├─► if exit != 0 and node.escalate:
        │     │     model = escalate(model); retry
        │     ├─► writeCheckpoint(node)
+       │     ├─► if node has approvalGate:
+       │     │     request approve / changes / abort
+       │     ├─► if changes requested:
+       │     │     rerun node with reviewer note, up to 3 cycles
        │
        └─► done
 ```
@@ -84,9 +88,9 @@ cli.ts (status action)
 
 ## Key types (forge/src/types.ts)
 
-- `Phase = "classify" | "brief" | "arch" | "stories" | "impl" | "verify" | "review"`
+- `Phase = "classify" | "ba" | "tech_arch" | "ux_design" | "arch_synthesis" | "stories" | "dev" | "qa" | "infra" | "review"`
 - `Classification = { projectType, complexity ("S"|"M"|"L"|"XL"), estFiles, requiresUi, stackHint, ambiguityScore, summary }`
-- `PlanNode = { id, phase, role, modelId, goal, allowedTools, budget, escalate }`
+- `PlanNode = { id, phase, role, modelId, goal, inputs, allowedTools, approvalGate?, expectedArtifacts? }`
 - `Plan = { runId, prompt, classification, nodes[], contextBudget, modelOverride? }`
 - `ProjectContext = { cwd, projectRoot, gitRoot?, branch?, hasBmad, hasSerena, hasForge, bmadPlanningDir?, serenaProjectFile?, packageManager }`
 - `McpServerConfig = { name, type ("stdio"|"http"), command?, args?, url?, enabled, source, risk ("low"|"medium"|"high") }`
@@ -98,7 +102,8 @@ cli.ts (status action)
 
 - **No vendor SDKs.** The Anthropic SDK was removed in v0.2; everything goes through the locally installed `claude` / `codex` CLIs. Result: no API keys, no SDK lock-in, but Forge can't observe streaming token-by-token — only final usage from the CLI.
 - **Adapter pattern.** New models that come with their own CLI (e.g. Codex) are added as adapters, not as Anthropic-style integrations. Adapters expose `{ name, binName, modelFlag(id), spawn(opts) }`.
-- **Phase-scoped tool allowlists.** Every plan node carries its own `allowedTools`. The sub-agent passes these through to the underlying CLI so e.g. `verify` can be denied shell.
+- **Phase-scoped tool allowlists.** Every plan node carries its own `allowedTools`. The sub-agent passes these through to the underlying CLI so planning phases can stay document-only while development, QA, and infra can run local commands.
+- **Human approval gates.** BA, architecture synthesis, QA, and infra nodes carry approval metadata. Forge pauses after those phases for approve/request-changes/abort and records the decision in the audit log.
 - **Deterministic router with overrides.** Routing is rule-based, not LLM-mediated. Cheaper, predictable, and easy to override via `--model` / `--coder` or by editing the plan before `resume`.
 - **Run state is local; planning artifacts are repo-tracked.** Per-machine ephemerality goes under `~/.forge/`; anything the team should see lives under `_bmad-output/`.
 - **Portable artifact writing.** All artifacts that touch the repo use project-relative paths so they survive shipping across machines.
