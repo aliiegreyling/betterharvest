@@ -11,6 +11,7 @@ import { detectProjectContext, formatProjectContext } from "../project/context.j
 import { checkMcpHealth, discoverMcpServers } from "../mcp/registry.js";
 import { buildStatusText, createDesignArtifact, refreshContext } from "../project/commands.js";
 import { runCli } from "../agents/cli-runner.js";
+import { crossProviderFallback, isCapacityOrContextFailure } from "../agents/router.js";
 import { debugLog, printUserError, verboseEnabled } from "../util/diagnostics.js";
 
 interface ChatDefaults {
@@ -287,7 +288,7 @@ async function runAskCommand(session: ChatSession, args: string[]): Promise<void
 }
 
 async function runChatTurn(session: ChatSession, message: string): Promise<void> {
-  const modelId = session.defaults.model ?? "sonnet";
+  let modelId = session.defaults.model ?? "sonnet";
   validateModel(modelId);
   debugLog("chat", "starting model turn", { modelId, messageLength: message.length }, session.defaults.debug);
   const projectContext = formatProjectContext(detectProjectContext(), { portable: true });
@@ -308,15 +309,15 @@ async function runChatTurn(session: ChatSession, message: string): Promise<void>
   ].filter((line): line is string => line !== undefined).join("\n");
 
   console.log(chalk.dim(`model: ${modelId}`));
-  const res = await runCli({
-    modelId,
-    prompt,
-    cwd: process.cwd(),
-    allowedTools: [],
-    chatOnly: true,
-    timeoutMs: 120_000,
-    verbose: session.defaults.debug,
-  });
+  let res = await runChatCli(modelId, prompt, session);
+  if (!res.ok && isCapacityOrContextFailure(res)) {
+    const fallback = crossProviderFallback(modelId);
+    if (fallback) {
+      console.log(chalk.yellow(`model fallback: ${modelId} -> ${fallback} (capacity/context limit)`));
+      modelId = fallback;
+      res = await runChatCli(modelId, prompt, session);
+    }
+  }
 
   if (!res.ok) {
     throw new Error(`Model chat failed (exit ${res.exitCode}): ${(res.stderr || res.finalText).slice(-500)}`);
@@ -327,6 +328,18 @@ async function runChatTurn(session: ChatSession, message: string): Promise<void>
   session.messages.push({ role: "assistant", content: answer });
   debugLog("chat", "model turn completed", { modelId, durationMs: res.durationMs, tokensIn: res.tokensIn, tokensOut: res.tokensOut }, session.defaults.debug);
   console.log(answer);
+}
+
+function runChatCli(modelId: string, prompt: string, session: ChatSession) {
+  return runCli({
+    modelId,
+    prompt,
+    cwd: process.cwd(),
+    allowedTools: [],
+    chatOnly: true,
+    timeoutMs: 120_000,
+    verbose: session.defaults.debug,
+  });
 }
 
 function captureRequest(session: ChatSession, args: string[]): void {

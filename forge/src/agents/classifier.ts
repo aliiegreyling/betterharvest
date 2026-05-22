@@ -1,6 +1,7 @@
 import { appendAudit } from "../run/state.js";
-import { Classification, RunContext } from "../types.js";
+import type { Classification, RunContext } from "../types.js";
 import { runCli } from "./cli-runner.js";
+import { crossProviderFallback, isCapacityOrContextFailure } from "./router.js";
 
 const INSTRUCTION = `You are a project classifier. Read the user's project prompt and output ONLY a JSON object on stdout matching this exact schema, with no prose, no markdown:
 {
@@ -18,19 +19,27 @@ Output the JSON only.`;
 
 export async function classify(prompt: string, ctx: RunContext): Promise<Classification> {
   const fullPrompt = `${INSTRUCTION}\n\nUSER PROMPT:\n"""${prompt}"""`;
-  const res = await runCli({
-    modelId: "haiku",
-    prompt: fullPrompt,
-    cwd: ctx.runDir,
-    allowedTools: [],
-    timeoutMs: 90_000,
-  });
+  let modelId = "haiku";
+  let res = await runClassifierCli(modelId, fullPrompt, ctx);
+  if (!res.ok && isCapacityOrContextFailure(res)) {
+    const fallback = crossProviderFallback(modelId, "classify");
+    if (fallback) {
+      appendAudit(ctx.runId, {
+        kind: "info",
+        agent: "classifier",
+        modelId,
+        message: `model fallback ${modelId} -> ${fallback} (capacity/context limit)`,
+      });
+      modelId = fallback;
+      res = await runClassifierCli(modelId, fullPrompt, ctx);
+    }
+  }
 
   appendAudit(ctx.runId, {
     kind: "cli_call",
     agent: "classifier",
-    modelId: "haiku",
-    cli: "claude",
+    modelId,
+    cli: modelId === "codex" ? "codex" : "claude",
     durationMs: res.durationMs,
     exitCode: res.exitCode,
     costUsd: res.costUsd,
@@ -47,6 +56,16 @@ export async function classify(prompt: string, ctx: RunContext): Promise<Classif
   if (res.costUsd) ctx.estCostUsd += res.costUsd;
 
   return extractJson(res.finalText) as Classification;
+}
+
+function runClassifierCli(modelId: string, prompt: string, ctx: RunContext) {
+  return runCli({
+    modelId,
+    prompt,
+    cwd: ctx.runDir,
+    allowedTools: [],
+    timeoutMs: 90_000,
+  });
 }
 
 export function extractJson(text: string): unknown {

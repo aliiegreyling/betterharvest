@@ -2,6 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { AuditEvent, Plan } from "../types.js";
+import { isForgeOutputRoot, isInsideForgeOutput } from "../project/output-paths.js";
+
+export interface DeleteRunResult {
+  runDeleted: boolean;
+  projectDeleted: boolean;
+  runId: string;
+  targetDir?: string;
+  skippedProjectDeleteReason?: string;
+}
 
 export function forgeHome(): string {
   return process.env.FORGE_HOME ?? path.join(os.homedir(), ".forge");
@@ -78,12 +87,37 @@ export function listRuns(): string[] {
   return fs.readdirSync(dir).sort().reverse();
 }
 
-export function deleteRun(runId: string): boolean {
+export function deleteRun(runId: string, opts: { deleteProject?: boolean } = {}): DeleteRunResult {
   if (runId.includes("/") || runId.includes("\\") || runId === "." || runId === "..") {
     throw new Error(`Invalid run id: ${runId}`);
   }
   const dir = runDir(runId);
-  if (!fs.existsSync(dir)) return false;
+  if (!fs.existsSync(dir)) return { runDeleted: false, projectDeleted: false, runId };
+
+  let targetDir: string | undefined;
+  let projectDeleted = false;
+  let skippedProjectDeleteReason: string | undefined;
+
+  if (opts.deleteProject) {
+    try {
+      targetDir = readPlan(runId).targetDir;
+      if (!targetDir) {
+        skippedProjectDeleteReason = "run plan has no targetDir";
+      } else if (!fs.existsSync(targetDir)) {
+        skippedProjectDeleteReason = "target project directory does not exist";
+      } else if (!isInsideForgeOutput(targetDir)) {
+        skippedProjectDeleteReason = "target project is outside Forge output root";
+      } else if (isForgeOutputRoot(targetDir)) {
+        skippedProjectDeleteReason = "target project is the shared Forge output root";
+      } else {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+        projectDeleted = true;
+      }
+    } catch (error) {
+      skippedProjectDeleteReason = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
-  return true;
+  return { runDeleted: true, projectDeleted, runId, targetDir, skippedProjectDeleteReason };
 }

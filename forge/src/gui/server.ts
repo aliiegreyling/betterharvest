@@ -6,9 +6,12 @@ import path from "node:path";
 import { URL } from "node:url";
 import { MODELS } from "../models/registry.js";
 import { runForge, RunOptions } from "../runner.js";
-import { deleteRun, listCheckpoints, listRuns, loadCheckpoint, newRunId, readAudit, readPlan } from "../run/state.js";
-import { ContextBudget, Plan } from "../types.js";
+import { appendAudit, deleteRun, listCheckpoints, listRuns, loadCheckpoint, newRunId, readAudit, readPlan } from "../run/state.js";
+import { ContextBudget, Plan, RoleGuide } from "../types.js";
 import { ForgeRunEvent } from "../runtime/events.js";
+import { runCli } from "../agents/cli-runner.js";
+import { forgeOutputRoot } from "../project/output-paths.js";
+import { crossProviderFallback, isCapacityOrContextFailure } from "../agents/router.js";
 
 interface GuiServerOptions {
   host?: string;
@@ -24,6 +27,12 @@ interface StartRunBody {
   allowCodexPlanning?: boolean;
   bmad?: boolean;
   dryRun?: boolean;
+  roleGuides?: RoleGuide[];
+}
+
+interface ChatBody {
+  message?: string;
+  model?: string;
 }
 
 interface ActiveRun {
@@ -36,7 +45,7 @@ interface ActiveRun {
 interface PreviewSession {
   runId: string;
   targetDir: string;
-  status: "missing" | "starting" | "running" | "error" | "stopped";
+  status: "missing" | "installing" | "starting" | "running" | "error" | "stopped";
   command?: string;
   url?: string;
   logs: string[];
@@ -44,9 +53,18 @@ interface PreviewSession {
   process?: ChildProcess;
 }
 
+interface FeatureChatSession {
+  runId: string;
+  status: "idle" | "running" | "error" | "done";
+  messages: Array<{ role: "user" | "assistant" | "system"; content: string; ts: string; model?: string }>;
+  activeModel?: string;
+  error?: string;
+}
+
 const clients = new Map<string, Set<ServerResponse>>();
 const activeRuns = new Map<string, ActiveRun>();
 const previews = new Map<string, PreviewSession>();
+const featureChats = new Map<string, FeatureChatSession>();
 
 export async function startGuiServer(opts: GuiServerOptions = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const host = opts.host ?? "127.0.0.1";
@@ -103,6 +121,11 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
 
+  if (method === "GET" && pathname === "/api/config") {
+    sendJson(res, 200, { outputRoot: forgeOutputRoot() });
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/runs") {
     sendJson(res, 200, { runs: listRuns().slice(0, 50).map(readRunListItem) });
     return;
@@ -118,7 +141,7 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
     stopPreview(runId);
     activeRuns.delete(runId);
     closeRunStreams(runId);
-    sendJson(res, 200, { deleted: deleteRun(runId), runId });
+    sendJson(res, 200, deleteRun(runId, { deleteProject: true }));
     return;
   }
 
@@ -131,6 +154,20 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
     }
     if (method === "POST") {
       sendJson(res, 202, await startPreview(runId));
+      return;
+    }
+  }
+
+  const chatMatch = pathname.match(/^\/api\/runs\/([^/]+)\/chat$/);
+  if (chatMatch) {
+    const runId = decodeURIComponent(chatMatch[1]);
+    if (method === "GET") {
+      sendJson(res, 200, readFeatureChat(runId));
+      return;
+    }
+    if (method === "POST") {
+      const body = await readJsonBody<ChatBody>(req);
+      sendJson(res, 202, await startFeatureChat(runId, body));
       return;
     }
   }
@@ -151,16 +188,16 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
       return;
     }
 
-    const targetDir = path.resolve(body.targetDir?.trim() || "./forge-out");
     const options: RunOptions = {
       runId,
       prompt,
-      targetDir,
+      targetDir: body.targetDir?.trim() || "./forge-out",
       dryRun,
       coder: normalizeOptional(body.coder),
       modelOverride: normalizePlanningModel(body.model, Boolean(body.allowCodexPlanning)),
       contextBudget: body.contextBudget ?? "standard",
       bmadOutput: Boolean(body.bmad),
+      roleGuides: sanitizeRoleGuides(body.roleGuides),
       onEvent: (event) => broadcast(runId, event),
     };
 
@@ -222,6 +259,7 @@ function readRunSnapshot(runId: string): object {
     checkpoints,
     progress: calculateProgress(plan, audit, active),
     preview: readPreviewState(runId),
+    chat: readFeatureChat(runId),
     files: targetDir ? listProjectFiles(targetDir) : [],
   };
 }
@@ -294,7 +332,7 @@ function readPreviewState(runId: string): object {
 
 async function startPreview(runId: string): Promise<object> {
   const existing = previews.get(runId);
-  if (existing?.status === "running" || existing?.status === "starting") return readPreviewState(runId);
+  if (existing?.status === "running" || existing?.status === "starting" || existing?.status === "installing") return readPreviewState(runId);
 
   let plan: Plan;
   try {
@@ -335,29 +373,26 @@ async function startPreview(runId: string): Promise<object> {
   };
   previews.set(runId, preview);
 
+  void startPreviewProcess(preview, pkg, args, port);
+  return readPreviewState(runId);
+}
+
+async function startPreviewProcess(preview: PreviewSession, pkg: "npm" | "pnpm" | "yarn", args: string[], port: number): Promise<void> {
+  if (!fs.existsSync(path.join(preview.targetDir, "node_modules"))) {
+    preview.status = "installing";
+    const installOk = await runPreviewCommand(preview, pkg, packageInstallArgs(pkg));
+    if (!installOk) return;
+  }
+
+  preview.status = "starting";
   const child = spawn(pkg, args, {
-    cwd: targetDir,
+    cwd: preview.targetDir,
     env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", BROWSER: "none" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   preview.process = child;
 
-  const onChunk = (chunk: Buffer) => {
-    const text = chunk.toString();
-    preview.logs.push(...text.split("\n").filter(Boolean).slice(-20));
-    preview.logs = preview.logs.slice(-120);
-    const foundUrl = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d+/)?.[0];
-    if (foundUrl) preview.url = foundUrl.replace("localhost", "127.0.0.1");
-    if (preview.status === "starting" && (foundUrl || /ready|compiled|started|local:/i.test(text))) preview.status = "running";
-    broadcast(runId, {
-      ts: new Date().toISOString(),
-      runId,
-      type: "cli_output",
-      message: "preview",
-      line: text.trim().slice(0, 240),
-    });
-  };
-
+  const onChunk = (chunk: Buffer) => appendPreviewLog(preview, chunk.toString());
   child.stdout.on("data", onChunk);
   child.stderr.on("data", onChunk);
   child.on("error", (error) => {
@@ -372,8 +407,203 @@ async function startPreview(runId: string): Promise<object> {
   setTimeout(() => {
     if (preview.status === "starting") preview.status = "running";
   }, 4000);
+}
 
-  return readPreviewState(runId);
+function packageInstallArgs(pkg: "npm" | "pnpm" | "yarn"): string[] {
+  if (pkg === "yarn") return ["install"];
+  if (pkg === "pnpm") return ["install"];
+  return ["install"];
+}
+
+function runPreviewCommand(preview: PreviewSession, command: string, args: string[]): Promise<boolean> {
+  preview.logs.push(`$ ${command} ${args.join(" ")}`);
+  const child = spawn(command, args, {
+    cwd: preview.targetDir,
+    env: { ...process.env, BROWSER: "none" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  return new Promise((resolve) => {
+    const onChunk = (chunk: Buffer) => appendPreviewLog(preview, chunk.toString());
+    child.stdout.on("data", onChunk);
+    child.stderr.on("data", onChunk);
+    child.on("error", (error) => {
+      preview.status = "error";
+      preview.error = error.message;
+      resolve(false);
+    });
+    child.on("close", (code) => {
+      if (code !== 0) {
+        preview.status = "error";
+        preview.error = `${command} ${args.join(" ")} exited with code ${code}`;
+        resolve(false);
+        return;
+      }
+      resolve(true);
+    });
+  });
+}
+
+function appendPreviewLog(preview: PreviewSession, text: string): void {
+  preview.logs.push(...text.split("\n").filter(Boolean).slice(-20));
+  preview.logs = preview.logs.slice(-160);
+  const foundUrl = text.match(/https?:\/\/(?:localhost|127\.0\.0\.1):\d+/)?.[0];
+  if (foundUrl) preview.url = foundUrl.replace("localhost", "127.0.0.1");
+  if (preview.status === "starting" && (foundUrl || /ready|compiled|started|local:/i.test(text))) preview.status = "running";
+  broadcast(preview.runId, {
+    ts: new Date().toISOString(),
+    runId: preview.runId,
+    type: "cli_output",
+    message: "preview",
+    line: text.trim().slice(0, 240),
+  });
+}
+
+function readFeatureChat(runId: string): object {
+  return featureChats.get(runId) ?? { runId, status: "idle", messages: [] };
+}
+
+async function startFeatureChat(runId: string, body: ChatBody): Promise<object> {
+  const message = body.message?.trim();
+  if (!message) return { runId, status: "error", error: "message is required", messages: [] };
+
+  let plan: Plan;
+  try {
+    plan = readPlan(runId);
+  } catch {
+    return { runId, status: "error", error: "Run plan is not available.", messages: [] };
+  }
+
+  const targetDir = inferTargetDir(plan);
+  if (!targetDir || !fs.existsSync(targetDir)) {
+    return { runId, status: "error", error: "Target directory does not exist.", messages: [] };
+  }
+
+  const modelId = normalizeOptional(body.model) ?? "codex";
+  const chat = featureChats.get(runId) ?? { runId, status: "idle", messages: [] };
+  if (chat.status === "running") return chat;
+  chat.status = "running";
+  chat.activeModel = modelId;
+  chat.error = undefined;
+  chat.messages.push({ role: "user", content: message, ts: new Date().toISOString(), model: modelId });
+  featureChats.set(runId, chat);
+
+  appendAudit(runId, { kind: "info", agent: "Feature Chat", modelId, message: `Feature request: ${message}` });
+  broadcast(runId, {
+    ts: new Date().toISOString(),
+    runId,
+    type: "cli_output",
+    modelId,
+    message: "feature_chat",
+    line: `feature request queued for ${modelId}: ${message}`,
+  });
+
+  void runFeatureChat(runId, targetDir, plan, chat, modelId, message);
+  return chat;
+}
+
+async function runFeatureChat(
+  runId: string,
+  targetDir: string,
+  plan: Plan,
+  chat: FeatureChatSession,
+  modelId: string,
+  message: string
+): Promise<void> {
+  const prompt = [
+    "# Role: Feature Continuation Developer",
+    "# Goal: Modify the existing generated app in-place.",
+    "",
+    "You are continuing a Forge-generated app. Work inside the current directory only.",
+    "Preserve the existing app, implement the user's requested change, and run the smallest useful verification.",
+    "If this is a web app, prefer preserving the current dev-server workflow and hot reload.",
+    "When complete, summarize files changed, how to verify, and any follow-up risks.",
+    "",
+    "# Original App Request",
+    plan.prompt,
+    "",
+    "# New Feature Request",
+    message,
+  ].join("\n");
+
+  const started = Date.now();
+  let activeModelId = modelId;
+  let res = await runFeatureCli(runId, targetDir, prompt, activeModelId);
+  if (!res.ok && isCapacityOrContextFailure(res)) {
+    const fallback = crossProviderFallback(activeModelId, "dev");
+    if (fallback) {
+      appendAudit(runId, {
+        kind: "info",
+        agent: "Feature Chat",
+        modelId: activeModelId,
+        message: `model fallback ${activeModelId} -> ${fallback} (capacity/context limit)`,
+      });
+      broadcast(runId, {
+        ts: new Date().toISOString(),
+        runId,
+        type: "cli_output",
+        modelId: fallback,
+        message: "feature_chat",
+        line: `model fallback ${activeModelId} -> ${fallback} (capacity/context limit)`,
+      });
+      activeModelId = fallback;
+      chat.activeModel = fallback;
+      res = await runFeatureCli(runId, targetDir, prompt, activeModelId);
+    }
+  }
+
+  appendAudit(runId, {
+    kind: "cli_call",
+    agent: "Feature Chat",
+    modelId: activeModelId,
+    cli: activeModelId === "codex" ? "codex" : "claude",
+    durationMs: res.durationMs || Date.now() - started,
+    exitCode: res.exitCode,
+    ok: res.ok,
+    costUsd: res.costUsd,
+    tokensIn: res.tokensIn,
+    tokensOut: res.tokensOut,
+    message: res.ok ? "Feature chat completed" : `Feature chat failed: ${res.stderr.slice(-500)}`,
+  });
+
+  chat.status = res.ok ? "done" : "error";
+  chat.error = res.ok ? undefined : res.stderr.slice(-800) || res.finalText.slice(-800);
+  chat.messages.push({
+    role: "assistant",
+    content: res.finalText.trim() || (res.ok ? "Done." : chat.error ?? "Failed."),
+    ts: new Date().toISOString(),
+    model: activeModelId,
+  });
+  broadcast(runId, {
+    ts: new Date().toISOString(),
+    runId,
+    type: res.ok ? "changes_requested" : "run_error",
+    modelId: activeModelId,
+    message: "feature_chat",
+    line: chat.messages[chat.messages.length - 1].content.slice(0, 240),
+  });
+}
+
+function runFeatureCli(runId: string, targetDir: string, prompt: string, modelId: string) {
+  return runCli({
+    modelId,
+    prompt,
+    cwd: targetDir,
+    allowedTools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
+    timeoutMs: 30 * 60_000,
+    onLine: (line) => {
+      const visibleLine = line.slice(0, 240);
+      appendAudit(runId, { kind: "cli_output", agent: "Feature Chat", modelId, message: visibleLine });
+      broadcast(runId, {
+        ts: new Date().toISOString(),
+        runId,
+        type: "cli_output",
+        modelId,
+        message: "feature_chat",
+        line: visibleLine,
+      });
+    },
+  });
 }
 
 function pickPreviewScript(scripts: Record<string, string>): string | null {
@@ -454,6 +684,19 @@ function normalizePlanningModel(value?: string, allowCodexPlanning = false): str
   return normalized;
 }
 
+function sanitizeRoleGuides(guides?: RoleGuide[]): RoleGuide[] {
+  if (!Array.isArray(guides)) return [];
+  const allowed = new Set(["ba", "qa"]);
+  return guides
+    .filter((guide) => allowed.has(guide.phase) && typeof guide.name === "string" && typeof guide.content === "string")
+    .map((guide) => ({
+      phase: guide.phase,
+      name: path.basename(guide.name).replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 120) || "role-guide.md",
+      content: guide.content.slice(0, 200_000),
+    }))
+    .slice(0, 16);
+}
+
 async function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -492,7 +735,8 @@ const DASHBOARD_HTML = `<!doctype html>
       </div>
       <form id="run-form" class="panel">
         <label>Request<textarea id="prompt" rows="6" placeholder="Build a web app for..."></textarea></label>
-        <label>Target directory<input id="targetDir" value="./forge-out"></label>
+        <label>Target directory<input id="targetDir" placeholder="auto: one folder per run"></label>
+        <div class="hint" id="output-root-hint">Generated projects are stored under Forge's ignored output folder.</div>
         <div class="grid2">
           <label>Planning<select id="model"><option value="auto">auto</option></select></label>
           <label>Impl<select id="coder"><option value="auto">auto</option></select></label>
@@ -500,6 +744,12 @@ const DASHBOARD_HTML = `<!doctype html>
         <label class="checkline"><input id="allowCodexPlanning" type="checkbox"> Allow Codex planning</label>
         <div class="hint">Default: terminal-safe router for planning, Codex for implementation. Enable Codex planning only when you want to test all-Codex phases.</div>
         <label>Context<select id="contextBudget"><option>standard</option><option>low</option><option>deep</option></select></label>
+        <div class="role-guides">
+          <div class="section-title">Role Guides</div>
+          <label>BA markdown<input id="baGuides" type="file" accept=".md,text/markdown,text/plain" multiple></label>
+          <label>QA markdown<input id="qaGuides" type="file" accept=".md,text/markdown,text/plain" multiple></label>
+          <div class="hint">Attached files are saved with the run and injected only into their matching BA or QA phase.</div>
+        </div>
         <div class="actions">
           <button type="button" id="plan-btn">Plan</button>
           <button type="submit">Run</button>
@@ -557,6 +807,21 @@ const DASHBOARD_HTML = `<!doctype html>
         <iframe id="preview-frame" title="Generated app preview"></iframe>
         <pre id="preview-log" class="preview-log"></pre>
       </section>
+
+      <section class="panel chat-panel">
+        <div class="preview-head">
+          <div>
+            <div class="section-title">Continue Build</div>
+            <div class="item-meta" id="chat-status">Select a completed app run, then request the next feature.</div>
+          </div>
+          <label class="chat-model">Model<select id="chatModel"><option value="codex">codex</option></select></label>
+        </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea id="chat-input" rows="3" placeholder="Add a pricing page, improve the navbar, wire up local persistence..."></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </section>
     </section>
   </main>
   <script src="/app.js"></script>
@@ -594,8 +859,10 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #111315; color: var(--text); padding: 9px 10px; outline: none; }
 textarea { resize: vertical; min-height: 128px; }
+input[type="file"] { color: var(--muted); font-size: 12px; padding: 8px; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.role-guides { display: grid; gap: 8px; padding-top: 4px; }
 .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
 button { border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); color: var(--text); padding: 9px 10px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
@@ -634,12 +901,21 @@ button[type="submit"] { background: #234438; border-color: #366653; }
 .preview-link { color: var(--accent); text-decoration: none; font-size: 12px; }
 #preview-frame { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 .preview-log { margin: 10px 0 0; max-height: 120px; overflow: auto; color: var(--muted); white-space: pre-wrap; }
+.chat-panel { min-height: 280px; }
+.chat-model { width: 180px; }
+.chat-messages { display: grid; gap: 8px; max-height: 260px; overflow: auto; margin-bottom: 12px; }
+.chat-message { border: 1px solid var(--line); border-radius: 6px; padding: 10px; background: #121416; white-space: pre-wrap; }
+.chat-message.user { border-color: #365c4b; }
+.chat-message.assistant { border-color: #3a4858; }
+.chat-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch; }
+.chat-form textarea { min-height: 78px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 920px) {
   .shell { grid-template-columns: 1fr; }
   .rail { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .phase-strip, .content-grid { grid-template-columns: 1fr; }
   .topbar, .preview-head { align-items: stretch; flex-direction: column; }
+  .chat-form { grid-template-columns: 1fr; }
   .run-meter { min-width: 0; }
 }
 `;
@@ -671,6 +947,18 @@ async function loadModels() {
     option.textContent = model.id;
     $("coder").appendChild(option);
   }
+  for (const model of models) {
+    if (model.id === "codex") continue;
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.id;
+    $("chatModel").appendChild(option);
+  }
+}
+
+async function loadConfig() {
+  const { outputRoot } = await api("/api/config");
+  $("output-root-hint").textContent = "Default: " + outputRoot + "/<run-id>";
 }
 
 async function loadRuns() {
@@ -698,8 +986,11 @@ async function loadRuns() {
 }
 
 async function deleteRun(runId) {
-  if (!confirm("Delete run " + runId + "?")) return;
-  await api("/api/runs/" + encodeURIComponent(runId), { method: "DELETE" });
+  if (!confirm("Delete run " + runId + " and its generated project folder?")) return;
+  const result = await api("/api/runs/" + encodeURIComponent(runId), { method: "DELETE" });
+  if (result.skippedProjectDeleteReason) {
+    alert("Run deleted. Project folder was not deleted: " + result.skippedProjectDeleteReason);
+  }
   if (state.selectedRunId === runId) {
     state.selectedRunId = null;
     state.snapshot = null;
@@ -742,6 +1033,7 @@ function render() {
   renderCheckpoints(snap);
   renderFiles(snap);
   renderPreview(snap);
+  renderChat(snap);
 }
 
 function clearDashboard() {
@@ -760,6 +1052,9 @@ function clearDashboard() {
   $("preview-link").textContent = "";
   $("preview-frame").removeAttribute("src");
   $("preview-btn").disabled = true;
+  $("chat-status").textContent = "Select a completed app run, then request the next feature.";
+  $("chat-messages").innerHTML = "";
+  $("chat-input").value = "";
 }
 
 function renderProgress(snap) {
@@ -817,7 +1112,16 @@ function renderPreview(snap) {
     link.textContent = "";
     $("preview-frame").removeAttribute("src");
   }
-  $("preview-btn").disabled = !state.selectedRunId || preview.status === "starting" || preview.status === "running";
+  $("preview-btn").disabled = !state.selectedRunId || preview.status === "installing" || preview.status === "starting" || preview.status === "running";
+}
+
+function renderChat(snap) {
+  const chat = snap?.chat || { status: "idle", messages: [] };
+  $("chat-status").textContent = chat.activeModel ? chat.status + " · " + chat.activeModel : chat.status || "idle";
+  $("chat-messages").innerHTML = (chat.messages || []).map((message) => {
+    return '<div class="chat-message ' + escapeHtml(message.role) + '"><div class="item-meta">' + escapeHtml(message.role + (message.model ? " · " + message.model : "")) + '</div>' + escapeHtml(message.content) + '</div>';
+  }).join("");
+  $("chat-form").querySelector("button").disabled = !state.selectedRunId || chat.status === "running";
 }
 
 function inferStatus(snap) {
@@ -827,7 +1131,7 @@ function inferStatus(snap) {
   return last ? "running or complete" : "planned";
 }
 
-function bodyFromForm(dryRun) {
+async function bodyFromForm(dryRun) {
   return {
     prompt: $("prompt").value,
     targetDir: $("targetDir").value,
@@ -835,19 +1139,34 @@ function bodyFromForm(dryRun) {
     coder: $("coder").value,
     allowCodexPlanning: $("allowCodexPlanning").checked,
     contextBudget: $("contextBudget").value,
+    roleGuides: await readRoleGuides(),
     dryRun,
   };
 }
 
+async function readRoleGuides() {
+  const guides = [];
+  for (const file of $("baGuides").files || []) guides.push(await readRoleGuideFile("ba", file));
+  for (const file of $("qaGuides").files || []) guides.push(await readRoleGuideFile("qa", file));
+  return guides;
+}
+
+async function readRoleGuideFile(phase, file) {
+  if (file.size > 200000) throw new Error(file.name + " is too large. Keep role guide markdown under 200 KB.");
+  return { phase, name: file.name, content: await file.text() };
+}
+
 $("run-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const { runId } = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bodyFromForm(false)) });
+  const body = await bodyFromForm(false);
+  const { runId } = await api("/api/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await loadRuns();
   await selectRun(runId);
 });
 
 $("plan-btn").addEventListener("click", async () => {
-  const { runId } = await api("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(bodyFromForm(true)) });
+  const body = await bodyFromForm(true);
+  const { runId } = await api("/api/plan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   await loadRuns();
   await selectRun(runId);
 });
@@ -858,11 +1177,25 @@ $("preview-btn").addEventListener("click", async () => {
   await refreshSelected();
 });
 
+$("chat-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!state.selectedRunId) return;
+  const message = $("chat-input").value.trim();
+  if (!message) return;
+  await api("/api/runs/" + encodeURIComponent(state.selectedRunId) + "/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, model: $("chatModel").value }),
+  });
+  $("chat-input").value = "";
+  await refreshSelected();
+});
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch]));
 }
 
-loadModels().then(loadRuns).then(() => {
+loadConfig().then(loadModels).then(loadRuns).then(() => {
   setInterval(loadRuns, 2500);
   setInterval(refreshSelected, 1500);
 }).catch((error) => {

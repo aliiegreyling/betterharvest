@@ -58,6 +58,12 @@ export interface PlanNode {
   expectedArtifacts?: string[];
 }
 
+export interface RoleGuide {
+  phase: Phase;
+  name: string;
+  content: string;
+}
+
 export interface ApprovalGate {
   id: string;
   label: string;
@@ -162,5 +168,6 @@ export interface RunContext {
   modelOverride?: string;
   bmadOutput: boolean;
   phaseNotes?: Partial<Record<Phase, string>>;
+  roleGuides?: Partial<Record<Phase, RoleGuide[]>>;
   onEvent?: ForgeRunEventHandler;
 }

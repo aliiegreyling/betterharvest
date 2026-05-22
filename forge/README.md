@@ -38,7 +38,7 @@ Plain text chats directly with the selected model, using compact project context
 /set model sonnet
 /request build a CLI todo in Python with SQLite
 /plan --bmad
-/new --target-dir ../todo --coder codex
+/new --target-dir todo --coder codex
 /new "inventory app" --step
 /new "inventory app" --plan-only
 /design data "todo domain model"
@@ -68,11 +68,13 @@ BA requirements -> technical architecture -> UI/UX design -> architecture synthe
 
 Approval gates pause after BA, architecture synthesis, QA/testing, and local infrastructure. The approver can approve, request changes, or abort. Use `--no-approval-gates` only for local experiments.
 
-Use `/work` or `forge work` to iterate on an existing project, defaulting to `./forge-out`:
+Generated projects are always kept under `forge/forge-out/`, which is ignored by Git. If you do not pass a target directory, Forge creates one project folder per run at `forge/forge-out/<run-id>`. Relative target names such as `todo` are scoped to `forge/forge-out/todo`.
+
+Use `/work` or `forge work` to iterate on an existing project:
 
 ```bash
 node dist/cli.js work "add password reset to the auth flow"
-node dist/cli.js work "tighten the dashboard mobile layout" --target-dir ./forge-out --dry-run
+node dist/cli.js work "tighten the dashboard mobile layout" --target-dir todo --dry-run
 ```
 
 Work mode uses the same SDLC team and approval gates, but writes `docs/CHANGE_REQUEST.md`, updates existing design/test/infra artifacts, and tells the dev agent to modify only the requested scope. It refuses to execute if the target project directory does not exist.
@@ -102,11 +104,11 @@ Existing subcommands remain available for scripts and CI:
 node dist/cli.js doctor
 node dist/cli.js models
 node dist/cli.js plan "build a CLI todo in Python"
-node dist/cli.js new "build a CLI todo in Python" --target-dir ../forge-out
+node dist/cli.js new "build a CLI todo in Python" --target-dir todo
 node dist/cli.js log <run-id>
 node dist/cli.js cost <run-id>
 node dist/cli.js runs
-node dist/cli.js resume <run-id> --target-dir ../forge-out
+node dist/cli.js resume <run-id>
 node dist/cli.js gui
 ```
 
@@ -121,7 +123,7 @@ node dist/cli.js mcp list
 node dist/cli.js mcp health
 node dist/cli.js inspect "auth flow"
 node dist/cli.js design data "domain model"
-node dist/cli.js work "add feature X to the existing forge-out project"
+node dist/cli.js work "add feature X to the existing app" --target-dir todo
 ```
 
 Local GUI:
@@ -135,9 +137,15 @@ The GUI is a local dashboard over Forge runs. It follows the same pipeline princ
 
 The dashboard shows phase progress, active-phase loading state, checkpoints, generated files, and a preview pane. For generated web apps, `Start preview` detects `package.json`, runs the app's `dev`, `start`, or `preview` script, and loads the local app URL in an iframe so framework hot reload can show changes while Forge is building.
 
+Use the `Role Guides` upload controls to attach markdown prompt files to BA or QA before starting a run. Forge stores those files under the run metadata and injects them only into the matching phase prompt, so a QA prompt pack can guide test-case, API-test, or Playwright-test behavior without changing the rest of the pipeline.
+
 Planning defaults to the terminal-safe router. Codex can still be selected for planning by enabling `Allow Codex planning`; otherwise Codex is best used as the implementation model. Long-running phases stream and persist CLI output into the run log so the implementation phase does not look idle while Codex is working.
 
-Runs can be deleted from the dashboard run list. Deleting a run removes its `~/.forge/runs/<id>/` metadata and checkpoints; generated project directories are left alone.
+If a model CLI hits a capacity, quota, session-token, or context-window limit, Forge automatically retries that step on the other provider. Codex falls back to Claude Sonnet or Opus depending on the phase; Claude falls back to Codex. The fallback is recorded in the live output and audit log.
+
+Runs can be deleted from the dashboard run list. Deleting a run removes its `~/.forge/runs/<id>/` metadata and checkpoints, and also removes that run's generated project folder when it is safely inside `forge/forge-out/`.
+
+After a run creates an app, use the `Continue Build` chat panel to request follow-up changes against that same target directory. Choose a model for the change request, send the message, and Forge will run the selected model inside the generated app with read/write/edit/shell permissions. The preview pane can stay open so framework hot reload shows the change when the app dev server supports it.
 
 Useful routing flags:
 
@@ -190,4 +198,4 @@ Each run writes to `~/.forge/runs/<id>/`:
 - `audit.jsonl` is the append-only event log.
 - `checkpoints/*.json` contains per-phase results.
 
-Generated projects land in `--target-dir`.
+Generated projects land under `forge/forge-out/`. The default target is `forge/forge-out/<run-id>`; named targets such as `--target-dir todo` land at `forge/forge-out/todo`.

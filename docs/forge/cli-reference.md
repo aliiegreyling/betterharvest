@@ -40,7 +40,7 @@ Build a new project from a natural-language prompt.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--target-dir <dir>` | `./forge-out` | Where the generated project lands |
+| `--target-dir <dir>` | auto | Where the generated project lands inside `forge/forge-out/` |
 | `--coder <model>` | — | Override dev-phase model |
 | `--model <id>` | — | Override non-QA phases |
 | `--context-budget <low\|standard\|deep>` | `standard` | Context budget mode |
@@ -51,6 +51,8 @@ Build a new project from a natural-language prompt.
 
 `new` runs the SDLC team flow: BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. Approval gates pause after BA, architecture synthesis, QA/testing, and local infrastructure unless disabled.
 
+Generated projects are always scoped to `forge/forge-out/`, which is ignored by Git. With no target, Forge creates `forge/forge-out/<run-id>`. A relative target like `--target-dir todo` becomes `forge/forge-out/todo`.
+
 #### `forge plan <prompt>`
 Print the routing plan without executing. Same flags as `new` except always dry-run.
 
@@ -59,7 +61,7 @@ Resume a saved run plan from `~/.forge/runs/<id>/plan.json`. Forge skips complet
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--target-dir <dir>` | `./forge-out` | Where the project lives |
+| `--target-dir <dir>` | saved plan target | Where the project lives inside `forge/forge-out/` |
 
 ### Environment & context
 
@@ -88,11 +90,11 @@ Print project context for a topic and indicate whether Serena semantic lookup is
 Write a BMAD scaffold-domain design artifact to `_bmad-output/planning-artifacts/forge-design/<domain>-design.md`. `<domain>` is free-text but the convention is one of `data | ux | backend | infra | frontend | deployment`.
 
 #### `forge work <request>`
-Run the SDLC team flow against an existing project, defaulting to `./forge-out`.
+Run the SDLC team flow against an existing project inside `forge/forge-out/`.
 
 | Flag | Default | Purpose |
 | --- | --- | --- |
-| `--target-dir <dir>` | `./forge-out` | Existing project to modify |
+| `--target-dir <dir>` | `forge/forge-out/` | Existing project to modify |
 | `--coder <model>` | — | Override dev-phase model |
 | `--model <id>` | — | Override non-QA phases |
 | `--context-budget <low\|standard\|deep>` | `standard` | Context budget mode |
@@ -102,6 +104,8 @@ Run the SDLC team flow against an existing project, defaulting to `./forge-out`.
 | `--skip-doctor` | off | Skip `claude`/`codex` availability check |
 
 `work` writes or updates `docs/CHANGE_REQUEST.md`, updates existing design/test/infra docs as needed, and instructs the dev agent to modify only the requested scope. It refuses to execute if the target directory does not exist; use `new` first or pass the correct `--target-dir`.
+
+Deleting a run from the GUI also deletes that run's generated project folder when the folder is inside `forge/forge-out/` and is not the shared output root.
 
 ### Introspection
 
@@ -127,12 +131,20 @@ GUI controls intentionally mirror terminal concepts:
 | Planning model | `--model <id>` |
 | Dev model | `--coder <id>` |
 | Context | `--context-budget <mode>` |
+| BA markdown upload | BA phase role guidance |
+| QA markdown upload | QA phase role guidance |
 
 The dashboard also includes a phase progress meter and app preview. `Start preview` detects the selected run's target directory, looks for `package.json`, runs the first available `dev`, `start`, or `preview` script, and embeds the local URL in the preview frame.
 
+Markdown role guides uploaded in the GUI are persisted under `~/.forge/runs/<id>/role-guides/<phase>/` and appended to the matching phase prompt. They are supplemental: Forge's current task, output directory, and autonomous run instructions take precedence on conflicts.
+
 Codex planning is available as an explicit opt-in in the GUI through `Allow Codex planning`. Without that option, selecting Codex for implementation keeps planning on the default terminal-safe route. Forge also persists `cli_output` audit events for model stdout, so long phases can be inspected after refresh.
 
-Each run in the GUI run list has a delete control. It deletes only Forge run metadata under `~/.forge/runs/<id>/`; it does not remove the generated target directory.
+When a CLI returns a capacity, quota, session-token, or context-window failure, Forge retries the current operation with the other provider. `codex` falls back to Claude (`sonnet` by default, `opus` for architecture-heavy phases), and Claude models fall back to `codex`. These fallbacks are written as `info` audit events and surfaced in live output.
+
+Each run in the GUI run list has a delete control. It deletes Forge run metadata under `~/.forge/runs/<id>/` and removes the generated target directory when that directory is inside `forge/forge-out/` and is not the shared output root.
+
+The `Continue Build` panel lets a user request follow-up app changes after a run. The request is sent to the selected model and executed in the run's target directory with the normal Forge tool surface for app edits.
 
 #### `forge runs`
 List up to 20 most recent runs with prompt snippet.

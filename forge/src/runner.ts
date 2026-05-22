@@ -16,12 +16,13 @@ import {
   runTechArch,
   runUxDesign,
 } from "./agents/sdlc.js";
-import { ContextBudget, Phase, Plan, PlanNode, RunContext, RunMode } from "./types.js";
+import { ContextBudget, Phase, Plan, PlanNode, RoleGuide, RunContext, RunMode } from "./types.js";
 import { appendAudit, ensureRunDir, loadCheckpoint, newRunId, readPlan, saveCheckpoint, writePlan } from "./run/state.js";
 import { detectProjectContext } from "./project/context.js";
 import { writeBmadPlanArtifact } from "./bmad/artifacts.js";
 import { createRunEvent, ForgeRunEventHandler } from "./runtime/events.js";
 import { checkCli } from "./util/check-cli.js";
+import { resolveForgeTargetDir } from "./project/output-paths.js";
 
 export interface RunOptions {
   prompt: string;
@@ -37,6 +38,7 @@ export interface RunOptions {
   approvalGates?: boolean;
   requestApproval?: (approval: ApprovalPrompt) => Promise<ApprovalDecision>;
   runId?: string;
+  roleGuides?: RoleGuide[];
   onEvent?: ForgeRunEventHandler;
 }
 
@@ -76,8 +78,12 @@ type PhaseRunner = (ctx: RunContext, plan: Plan) => Promise<Awaited<ReturnType<t
 export async function runForge(opts: RunOptions): Promise<{ runId: string; plan: Plan }> {
   const runId = opts.resumeRunId ?? opts.runId ?? newRunId();
   const runDirPath = ensureRunDir(runId);
-  const targetDir = path.resolve(opts.targetDir);
   const mode = opts.mode ?? "new";
+  const resumePlan = opts.resumeRunId ? readPlan(runId) : null;
+  const targetDir = resolveForgeTargetDir(resumePlan?.targetDir ?? opts.targetDir, {
+    runId,
+    mode: opts.resumeRunId ? "resume" : mode,
+  });
   const projectContext = detectProjectContext(process.cwd());
   if (mode === "work" && !fs.existsSync(targetDir) && !opts.dryRun) {
     throw new Error(`Cannot run work mode because target project does not exist: ${targetDir}`);
@@ -97,10 +103,12 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     modelOverride: opts.modelOverride ?? process.env.FORGE_MODEL,
     bmadOutput: opts.bmadOutput ?? false,
     phaseNotes: {},
+    roleGuides: normalizeRoleGuides(opts.roleGuides ?? []),
     onEvent: opts.onEvent,
   };
   const emit = opts.onEvent ?? (() => undefined);
 
+  persistRoleGuides(ctx);
   emit(createRunEvent(runId, "run_created", { targetDir, runDir: runDirPath }));
   console.log(chalk.bold(`\nforge run ${runId}`));
   console.log(chalk.dim(`  mode: ${ctx.mode}`));
@@ -112,7 +120,7 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
 
   let plan: Plan;
   if (opts.resumeRunId) {
-    plan = readPlan(runId);
+    plan = resumePlan!;
     ctx.mode = plan.mode ?? ctx.mode;
     console.log(chalk.dim(`  resumed from existing plan`));
   } else {
@@ -225,6 +233,48 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
   console.log(chalk.dim(`  est. cost: $${ctx.estCostUsd.toFixed(4)} (from CLI JSON output when available)`));
   emit(createRunEvent(runId, "run_done", { targetDir, runDir: runDirPath, data: { estCostUsd: ctx.estCostUsd } }));
   return { runId, plan };
+}
+
+function normalizeRoleGuides(guides: RoleGuide[]): Partial<Record<Phase, RoleGuide[]>> {
+  const allowed = new Set<Phase>(["ba", "qa"]);
+  const grouped: Partial<Record<Phase, RoleGuide[]>> = {};
+  for (const guide of guides) {
+    if (!allowed.has(guide.phase)) continue;
+    const content = guide.content.trim();
+    if (!content) continue;
+    const phaseGuides = grouped[guide.phase] ?? [];
+    phaseGuides.push({
+      phase: guide.phase,
+      name: sanitizeGuideName(guide.name),
+      content: content.slice(0, 200_000),
+    });
+    grouped[guide.phase] = phaseGuides.slice(0, 8);
+  }
+  return grouped;
+}
+
+function persistRoleGuides(ctx: RunContext): void {
+  const phases = Object.entries(ctx.roleGuides ?? {}) as Array<[Phase, RoleGuide[]]>;
+  if (phases.length === 0) return;
+  for (const [phase, guides] of phases) {
+    if (guides.length === 0) continue;
+    const dir = path.join(ctx.runDir, "role-guides", phase);
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [index, guide] of guides.entries()) {
+      const file = `${String(index + 1).padStart(2, "0")}-${sanitizeGuideName(guide.name)}`;
+      fs.writeFileSync(path.join(dir, file), guide.content);
+    }
+    appendAudit(ctx.runId, {
+      kind: "info",
+      agent: "Forge",
+      message: `attached ${guides.length} uploaded role guide(s) to ${phase}`,
+    });
+  }
+}
+
+function sanitizeGuideName(name: string): string {
+  const cleaned = path.basename(name || "role-guide.md").replace(/[^a-zA-Z0-9._-]/g, "-");
+  return cleaned.endsWith(".md") ? cleaned : `${cleaned}.md`;
 }
 
 function firstIncompletePhaseIndex(
