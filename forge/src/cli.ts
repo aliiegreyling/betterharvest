@@ -12,6 +12,7 @@ import { checkMcpHealth, discoverMcpServers } from "./mcp/registry.js";
 import { buildStatusText, createBrownfieldWorkPlan, createDesignArtifact, refreshContext } from "./project/commands.js";
 import { startChat } from "./chat/session.js";
 import { debugLog, printUserError, verboseEnabled } from "./util/diagnostics.js";
+import { startGuiServer } from "./gui/server.js";
 
 const program = new Command();
 program
@@ -226,6 +227,23 @@ program
   });
 
 program
+  .command("gui")
+  .description("Start the local Forge run dashboard")
+  .option("--host <host>", "host to bind", "127.0.0.1")
+  .option("--port <port>", "port to bind", "4545")
+  .action(async (opts: { host: string; port: string }) => {
+    await runCommand("gui", async () => {
+      const port = Number.parseInt(opts.port, 10);
+      if (!Number.isInteger(port) || port <= 0) throw new Error(`Invalid port: ${opts.port}`);
+      const server = await startGuiServer({ host: opts.host, port });
+      console.log(chalk.bold("Forge GUI"));
+      console.log(chalk.green(`  ${server.url}`));
+      console.log(chalk.dim("Press Ctrl+C to stop the dashboard."));
+      await waitForShutdown(server.close);
+    });
+  });
+
+program
   .command("log")
   .description("Print the audit log for a run")
   .argument("<run-id>")
@@ -378,4 +396,17 @@ function summarizeOptions(prompt: string, opts: {
     dryRun: opts.dryRun ?? false,
     promptLength: prompt.length,
   };
+}
+
+async function waitForShutdown(close: () => Promise<void>): Promise<void> {
+  await new Promise<void>((resolve) => {
+    const stop = async () => {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
+      await close();
+      resolve();
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+  });
 }

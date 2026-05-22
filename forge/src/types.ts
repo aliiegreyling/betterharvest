@@ -1,3 +1,5 @@
+import type { ForgeRunEventHandler } from "./runtime/events.js";
+
 export type Complexity = "S" | "M" | "L" | "XL";
 
 export type Phase =
@@ -85,6 +87,7 @@ export interface Plan {
   runId: string;
   createdAt: string;
   prompt: string;
+  targetDir?: string;
   classification: Classification;
   nodes: PlanNode[];
   contextBudget: ContextBudget;
@@ -131,4 +134,5 @@ export interface RunContext {
   modelOverride?: string;
   bmadOutput: boolean;
   phaseNotes?: Partial<Record<Phase, string>>;
+  onEvent?: ForgeRunEventHandler;
 }

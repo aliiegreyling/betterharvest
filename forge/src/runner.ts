@@ -8,6 +8,7 @@ import { ContextBudget, Phase, Plan, PlanNode, RunContext } from "./types.js";
 import { appendAudit, ensureRunDir, newRunId, readPlan, saveCheckpoint, writePlan } from "./run/state.js";
 import { detectProjectContext } from "./project/context.js";
 import { writeBmadPlanArtifact } from "./bmad/artifacts.js";
+import { createRunEvent, ForgeRunEventHandler } from "./runtime/events.js";
 
 export interface RunOptions {
   prompt: string;
@@ -19,6 +20,8 @@ export interface RunOptions {
   contextBudget?: ContextBudget;
   bmadOutput?: boolean;
   beforePhase?: (phase: PhasePrompt) => Promise<PhaseDecision>;
+  runId?: string;
+  onEvent?: ForgeRunEventHandler;
 }
 
 export interface PhasePrompt {
@@ -36,7 +39,7 @@ export interface PhaseDecision {
 }
 
 export async function runForge(opts: RunOptions): Promise<{ runId: string; plan: Plan }> {
-  const runId = opts.resumeRunId ?? newRunId();
+  const runId = opts.resumeRunId ?? opts.runId ?? newRunId();
   const runDirPath = ensureRunDir(runId);
   const targetDir = path.resolve(opts.targetDir);
   const projectContext = detectProjectContext(process.cwd());
@@ -52,8 +55,11 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     modelOverride: opts.modelOverride ?? process.env.FORGE_MODEL,
     bmadOutput: opts.bmadOutput ?? false,
     phaseNotes: {},
+    onEvent: opts.onEvent,
   };
+  const emit = opts.onEvent ?? (() => undefined);
 
+  emit(createRunEvent(runId, "run_created", { targetDir, runDir: runDirPath }));
   console.log(chalk.bold(`\nforge run ${runId}`));
   console.log(chalk.dim(`  target: ${targetDir}`));
   console.log(chalk.dim(`  run dir: ${runDirPath}`));
@@ -75,11 +81,13 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     );
     plan = buildPlan(opts.prompt, classification, ctx, { coder: opts.coder });
     writePlan(runId, plan);
+    emit(createRunEvent(runId, "plan_written", { data: plan }));
     if (ctx.bmadOutput) {
       const artifactDir = writeBmadPlanArtifact(projectContext, plan);
       if (artifactDir) console.log(chalk.dim(`  BMAD plan: ${artifactDir}`));
     }
     saveCheckpoint(runId, "00-plan", plan);
+    emit(createRunEvent(runId, "checkpoint_saved", { checkpoint: "00-plan", data: plan }));
   }
 
   if (opts.dryRun) {
@@ -87,6 +95,7 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     for (const n of plan.nodes) {
       console.log(`  ${n.phase.padEnd(8)} ${n.modelId.padEnd(7)}  ${n.goal}`);
     }
+    emit(createRunEvent(runId, "run_done", { targetDir, runDir: runDirPath, data: { dryRun: true } }));
     return { runId, plan };
   }
 
@@ -130,15 +139,32 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
 
     console.log(chalk.cyan(`\n[${ph.idx}/7] ${ph.name} (model ${node.modelId})`));
     appendAudit(runId, { kind: "phase_start", nodeId: node.id, modelId: node.modelId });
+    emit(createRunEvent(runId, "phase_start", {
+      nodeId: node.id,
+      phase: ph.phase,
+      phaseName: ph.name,
+      modelId: node.modelId,
+      node,
+    }));
     const r = await ph.fn(ctx, plan);
-    appendAudit(runId, {
+    const auditEvent = {
       kind: "phase_end",
       nodeId: node.id,
       ok: r.ok,
       costUsd: r.costUsd,
       message: r.output.slice(0, 500),
-    });
+    } as const;
+    appendAudit(runId, auditEvent);
+    emit(createRunEvent(runId, "phase_end", {
+      nodeId: node.id,
+      phase: ph.phase,
+      phaseName: ph.name,
+      modelId: r.modelUsed,
+      ok: r.ok,
+      message: r.output.slice(0, 500),
+    }));
     saveCheckpoint(runId, ph.checkpoint, { ok: r.ok, modelUsed: r.modelUsed, durationMs: r.durationMs, output: r.output });
+    emit(createRunEvent(runId, "checkpoint_saved", { checkpoint: ph.checkpoint }));
     console.log(
       r.ok
         ? chalk.green(`  ✓ ${ph.name} ok in ${(r.durationMs / 1000).toFixed(1)}s${r.costUsd ? ` ($${r.costUsd.toFixed(4)})` : ""}`)
@@ -154,5 +180,6 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
   console.log(chalk.dim(`  audit: ${path.join(runDirPath, "audit.jsonl")}`));
   console.log(chalk.dim(`  project: ${targetDir}`));
   console.log(chalk.dim(`  est. cost: $${ctx.estCostUsd.toFixed(4)} (from CLI JSON output when available)`));
+  emit(createRunEvent(runId, "run_done", { targetDir, runDir: runDirPath, data: { estCostUsd: ctx.estCostUsd } }));
   return { runId, plan };
 }

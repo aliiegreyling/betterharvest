@@ -81,6 +81,7 @@ export function buildPlan(
     runId: ctx.runId,
     createdAt: new Date().toISOString(),
     prompt,
+    targetDir: ctx.targetDir,
     classification,
     nodes: routed,
     contextBudget: ctx.contextBudget,

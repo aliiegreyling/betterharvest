@@ -63,6 +63,15 @@ export function loadCheckpoint<T>(runId: string, name: string): T | null {
   return JSON.parse(fs.readFileSync(p, "utf8")) as T;
 }
 
+export function listCheckpoints(runId: string): string[] {
+  const dir = path.join(runDir(runId), "checkpoints");
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .sort();
+}
+
 export function listRuns(): string[] {
   const dir = path.join(forgeHome(), "runs");
   if (!fs.existsSync(dir)) return [];

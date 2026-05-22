@@ -34,6 +34,7 @@ Plain text chats directly with the selected model, using compact project context
 
 ```text
 /help
+/models
 /set model sonnet
 /request build a CLI todo in Python with SQLite
 /plan --bmad
@@ -48,6 +49,8 @@ Plain text chats directly with the selected model, using compact project context
 ```
 
 Use `/request <text>` to capture a project idea without spending model tokens. Use plain text or `/ask <message>` when you want a model response.
+
+On startup, chat prints the high-value commands and the available model ids. The interactive `/new` journey also prompts for planning and implementation model choices; use `auto` to keep Forge's router-owned defaults.
 
 `/new` is guided in chat. In an interactive terminal it asks for the project request, target directory, context budget, and run mode before starting agent work:
 
@@ -86,6 +89,7 @@ node dist/cli.js log <run-id>
 node dist/cli.js cost <run-id>
 node dist/cli.js runs
 node dist/cli.js resume <run-id> --target-dir ../forge-out
+node dist/cli.js gui
 ```
 
 Context and planning commands:
@@ -99,6 +103,17 @@ node dist/cli.js inspect "auth flow"
 node dist/cli.js design data "domain model"
 node dist/cli.js work "add feature X"
 ```
+
+Local GUI:
+
+```bash
+node dist/cli.js gui
+node dist/cli.js gui --port 4546
+```
+
+The GUI is a local dashboard over Forge runs. It follows the same pipeline principles as the terminal: `Plan` maps to dry-run planning, `Run` maps to the full Forge phase pipeline, and all durable state still lands under `~/.forge/runs/<id>/`.
+
+The dashboard shows phase progress, active-phase loading state, checkpoints, generated files, and a preview pane. For generated web apps, `Start preview` detects `package.json`, runs the app's `dev`, `start`, or `preview` script, and loads the local app URL in an iframe so framework hot reload can show changes while Forge is building.
 
 Useful routing flags:
 
@@ -117,6 +132,7 @@ node dist/cli.js new "build a CLI todo app" --coder codex --context-budget deep 
 6. **Router** assigns models per phase using deterministic rules, with `--model` for broad non-verification overrides and `--coder` for implementation-only overrides.
 7. **CLI adapters** invoke Claude Code or Codex with phase-scoped tool permissions and the target directory as the working directory.
 8. **Audit and checkpoints** write run metadata under `~/.forge/runs/<id>/`.
+9. **GUI dashboard** reads the same run metadata and streams live events for GUI-started runs.
 
 ## BMAD, Serena, and MCP
 

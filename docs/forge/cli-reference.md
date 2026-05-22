@@ -13,6 +13,25 @@ Source: [forge/src/cli.ts](../../forge/src/cli.ts). Version: `0.3.0`.
 
 ## Commands
 
+### Chat
+
+#### `forge` / `forge chat`
+Start the chat-first harness. On startup, Forge shows the high-value slash commands plus the available model ids.
+
+Plain text chats with the selected model and captures the text as the current request. Operational work is driven by slash commands:
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show the full command list |
+| `/models` | Show model registry details |
+| `/set model <id\|auto>` | Set or clear the chat model override |
+| `/set coder <id\|auto>` | Set or clear the implementation model override |
+| `/request <text>` | Capture an app/project request without calling a model |
+| `/plan [prompt]` | Build a dry-run routing plan |
+| `/new [prompt]` | Start the guided project journey |
+
+During guided `/new`, Forge prompts for request, target directory, context budget, planning model, implementation model, and run mode. Use `auto` for model prompts to keep the deterministic router in control.
+
 ### Build & plan
 
 #### `forge new <prompt>`
@@ -71,6 +90,28 @@ Create a brownfield work-plan artifact (currently a scaffold; the work-plan is t
 
 #### `forge models`
 List the model registry with `{id, cli, cliModelFlag, strengths, notes}`.
+
+#### `forge gui`
+Start the local Forge dashboard.
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--host <host>` | `127.0.0.1` | Host/interface to bind |
+| `--port <port>` | `4545` | Local dashboard port |
+
+The dashboard reads `~/.forge/runs/<id>/plan.json`, `audit.jsonl`, and checkpoints so it can observe terminal-launched runs. Runs started from the dashboard stream live events over Server-Sent Events.
+
+GUI controls intentionally mirror terminal concepts:
+
+| GUI Control | Terminal equivalent |
+| --- | --- |
+| `Plan` | `forge plan ...` / dry-run routing plan |
+| `Run` | `forge new ...` / full phase pipeline |
+| Planning model | `--model <id>` |
+| Impl model | `--coder <id>` |
+| Context | `--context-budget <mode>` |
+
+The dashboard also includes a phase progress meter and app preview. `Start preview` detects the selected run's target directory, looks for `package.json`, runs the first available `dev`, `start`, or `preview` script, and embeds the local URL in the preview frame.
 
 #### `forge runs`
 List up to 20 most recent runs with prompt snippet.

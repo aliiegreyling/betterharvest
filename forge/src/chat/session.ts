@@ -3,7 +3,7 @@ import { createInterface, Interface } from "node:readline";
 import path from "node:path";
 import { PhaseDecision, PhasePrompt, runForge } from "../runner.js";
 import { ContextBudget } from "../types.js";
-import { getModel, MODELS } from "../models/registry.js";
+import { formatModelIdList, getModel, MODELS } from "../models/registry.js";
 import { readAudit, readPlan, listRuns } from "../run/state.js";
 import { checkCli } from "../util/check-cli.js";
 import { listAdapters } from "../cli-adapters/index.js";
@@ -79,9 +79,17 @@ const HELP = [
   "",
   "Plain text chats with the selected model and also becomes the current request.",
   "Use /request when you only want to capture a project idea without spending tokens.",
+  `Models: ${formatModelIdList()} (use /models for details, /set model auto to use the default).`,
   "/new starts with setup prompts in an interactive terminal. Choose step mode to add guidance before each agent phase.",
   "Flow flags: --target-dir <dir>, --model <id>, --coder <id>, --context-budget <low|standard|deep>, --bmad, --skip-doctor, --auto, --step, --plan-only.",
 ].join("\n");
+
+function printChatWelcome(session: ChatSession): void {
+  console.log(chalk.bold("Forge chat"));
+  console.log(chalk.dim("Commands: /help, /request, /plan, /new, /models, /status, /exit"));
+  console.log(chalk.dim(`Models: ${formatModelIdList()} · selected: ${session.defaults.model ?? "sonnet"} · coder: ${session.defaults.coder ?? "auto"}`));
+  console.log(chalk.dim("Plain text chats with the selected model."));
+}
 
 export async function startChat(opts: { debug?: boolean } = {}): Promise<void> {
   const session: ChatSession = {
@@ -95,8 +103,7 @@ export async function startChat(opts: { debug?: boolean } = {}): Promise<void> {
     },
   };
 
-  console.log(chalk.bold("Forge chat"));
-  console.log(chalk.dim("Type /help for commands. Plain text chats with the selected model."));
+  printChatWelcome(session);
 
   const rl = createInterface({
     input: process.stdin,
@@ -384,6 +391,9 @@ async function prepareNewJourney(
   const editedPrompt = await askWithDefault(runtime, "Project request", prompt);
   const targetDir = await askWithDefault(runtime, "Target directory", flow.targetDir);
   const contextBudget = await askWithDefault(runtime, "Context budget (low|standard|deep)", flow.contextBudget);
+  console.log(chalk.dim(`Available models: ${formatModelIdList()} (use auto for router defaults).`));
+  const model = await askWithDefault(runtime, `Planning model (auto|${formatModelIdList("|")})`, flow.model ?? "auto");
+  const coder = await askWithDefault(runtime, `Implementation model (auto|${formatModelIdList("|")})`, flow.coder ?? "auto");
   const mode = (await askWithDefault(runtime, "Run mode (step|auto|plan|cancel)", "step")).toLowerCase();
 
   if (mode === "cancel" || mode === "c") throw new Error("Project creation cancelled before execution.");
@@ -395,6 +405,8 @@ async function prepareNewJourney(
     ...flow,
     targetDir,
     contextBudget: parseContextBudget(contextBudget),
+    model: parseOptionalModel(model),
+    coder: parseOptionalModel(coder),
     dryRun: mode === "plan",
     confirmPhases: mode === "step",
   };
@@ -501,12 +513,10 @@ function setDefault(session: ChatSession, args: string[]): void {
       session.defaults.targetDir = value;
       break;
     case "model":
-      validateModel(value);
-      session.defaults.model = value === "none" ? undefined : value;
+      session.defaults.model = parseOptionalModel(value);
       break;
     case "coder":
-      validateModel(value);
-      session.defaults.coder = value === "none" ? undefined : value;
+      session.defaults.coder = parseOptionalModel(value);
       break;
     case "context-budget":
       session.defaults.contextBudget = parseContextBudget(value);
@@ -524,7 +534,20 @@ function setDefault(session: ChatSession, args: string[]): void {
       throw new Error(`Unknown setting: ${key}`);
   }
 
-  console.log(chalk.green(`Set ${key} = ${value}`));
+  console.log(chalk.green(`Set ${key} = ${displaySettingValue(key, value, session)}`));
+}
+
+function parseOptionalModel(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (["auto", "default", "none"].includes(normalized)) return undefined;
+  validateModel(normalized);
+  return normalized;
+}
+
+function displaySettingValue(key: string, inputValue: string, session: ChatSession): string {
+  if (key === "model") return session.defaults.model ?? "auto";
+  if (key === "coder") return session.defaults.coder ?? "auto";
+  return inputValue;
 }
 
 function parseBoolean(value: string, key: string): boolean {
@@ -608,6 +631,7 @@ function showSession(session: ChatSession): void {
   console.log(`  target-dir: ${session.defaults.targetDir}`);
   console.log(`  model: ${session.defaults.model ?? "(auto)"}`);
   console.log(`  coder: ${session.defaults.coder ?? "(auto)"}`);
+  console.log(`  available models: ${formatModelIdList()}`);
   console.log(`  context-budget: ${session.defaults.contextBudget}`);
   console.log(`  bmad: ${session.defaults.bmad}`);
   console.log(`  skip-doctor: ${session.defaults.skipDoctor}`);

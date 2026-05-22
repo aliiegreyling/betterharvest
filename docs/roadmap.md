@@ -39,6 +39,7 @@ Goal: turn the placeholder commands into real execution.
 ## Later (v0.5+)
 
 - **Provider-agnostic model clients** beyond Anthropic + Codex CLI (OpenAI direct, local models, others as needed).
+- **Local GUI observability surface** (`forge gui`) — watch request understanding, model routing, phase progress, checkpoints, logs, and generated app preview from the same run artifacts the CLI writes.
 - **Deployment planning** (`forge deploy plan`) — produce deployment topology and handoff to a deployment MCP.
 - **Approval-gated deployment execution.**
 - **Full scaffold domains** as first-class subcommands: `forge design data|ux|backend|infra|frontend|deployment` should each produce executable plans, not just placeholder artifacts.
@@ -46,9 +47,8 @@ Goal: turn the placeholder commands into real execution.
 
 ## Out of scope (for v1)
 
-- GUI / browser canvas / live preview.
+- Hosted multi-tenant GUI execution.
 - Fully autonomous production deployment without approvals.
-- Multi-tenant hosted execution.
 - Hard-coded frontend or backend stack assumptions.
 
 ## Reference

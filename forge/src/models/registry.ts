@@ -37,6 +37,14 @@ export const MODELS: ModelMeta[] = [
 
 export function getModel(id: string): ModelMeta {
   const m = MODELS.find((m) => m.id === id);
-  if (!m) throw new Error(`Unknown model id: ${id}`);
+  if (!m) throw new Error(`Unknown model id: ${id}. Available models: ${formatModelIdList()}`);
   return m;
+}
+
+export function listModelIds(): string[] {
+  return MODELS.map((m) => m.id);
+}
+
+export function formatModelIdList(separator = ", "): string {
+  return listModelIds().join(separator);
 }

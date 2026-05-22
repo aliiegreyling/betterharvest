@@ -3,6 +3,7 @@ import { appendAudit } from "../run/state.js";
 import { Plan, PlanNode, RunContext } from "../types.js";
 import { runCli } from "./cli-runner.js";
 import { escalate } from "./router.js";
+import { createRunEvent } from "../runtime/events.js";
 
 export interface SubAgentResult {
   ok: boolean;
@@ -32,11 +33,18 @@ export async function runSubAgent(
       timeoutMs: opts.timeoutMs ?? 15 * 60_000,
       onLine: (line) => {
         if (line.startsWith("{") && line.length > 500) return;
-        process.stdout.write(chalk.dim(`    ${line.slice(0, 240)}\n`));
+        const visibleLine = line.slice(0, 240);
+        ctx.onEvent?.(createRunEvent(ctx.runId, "cli_output", {
+          nodeId: node.id,
+          phase: node.phase,
+          modelId,
+          line: visibleLine,
+        }));
+        process.stdout.write(chalk.dim(`    ${visibleLine}\n`));
       },
     });
 
-    appendAudit(ctx.runId, {
+    const auditEvent = {
       kind: "cli_call",
       nodeId: node.id,
       agent: node.role,
@@ -48,7 +56,19 @@ export async function runSubAgent(
       tokensIn: res.tokensIn,
       tokensOut: res.tokensOut,
       ok: res.ok,
-    });
+    } as const;
+    appendAudit(ctx.runId, auditEvent);
+    ctx.onEvent?.(createRunEvent(ctx.runId, "cli_call", {
+      nodeId: node.id,
+      phase: node.phase,
+      modelId,
+      ok: res.ok,
+      audit: {
+        ts: new Date().toISOString(),
+        runId: ctx.runId,
+        ...auditEvent,
+      },
+    }));
 
     if (res.costUsd) ctx.estCostUsd += res.costUsd;
 
