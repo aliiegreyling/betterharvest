@@ -3,7 +3,7 @@ import { CliAdapter } from "./types.js";
 export const codexAdapter: CliAdapter = {
   name: "codex",
   binName: "codex",
-  defaultModelFlag: "gpt-5-codex",
+  defaultModelFlag: "",
 
   // Codex CLI runs in --full-auto mode with its own sandbox; it doesn't accept
   // a per-call tool allowlist the way Claude Code does. We ignore the
@@ -15,12 +15,12 @@ export const codexAdapter: CliAdapter = {
   buildArgs(opts) {
     const args = [
       "exec",
-      "--model",
-      opts.modelFlag,
       "--cd",
       opts.cwd,
+      "--skip-git-repo-check",
     ];
-    if (!opts.chatOnly) args.push("--full-auto");
+    if (opts.modelFlag) args.push("--model", opts.modelFlag);
+    if (!opts.chatOnly) args.push("--sandbox", "workspace-write");
     args.push(opts.prompt);
     return args;
   },

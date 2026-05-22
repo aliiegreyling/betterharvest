@@ -28,10 +28,10 @@ export const MODELS: ModelMeta[] = [
   {
     id: "codex",
     cli: "codex",
-    cliModelFlag: "gpt-5-codex",
+    cliModelFlag: "",
     strengths: ["coding"],
     latencyClass: "medium",
-    notes: "OpenAI Codex CLI — alternative coding voice for specialist nodes.",
+    notes: "OpenAI Codex CLI — uses the local Codex account's default model.",
   },
 ];
 

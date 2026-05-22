@@ -27,7 +27,8 @@ interface StartRunBody {
 
 interface ActiveRun {
   runId: string;
-  status: "running" | "done" | "error";
+  status: "running" | "planned" | "done" | "error";
+  mode: "plan" | "run";
   error?: string;
 }
 
@@ -148,18 +149,18 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
       targetDir,
       dryRun,
       coder: normalizeOptional(body.coder),
-      modelOverride: normalizeOptional(body.model),
+      modelOverride: normalizePlanningModel(body.model),
       contextBudget: body.contextBudget ?? "standard",
       bmadOutput: Boolean(body.bmad),
       onEvent: (event) => broadcast(runId, event),
     };
 
-    activeRuns.set(runId, { runId, status: "running" });
+    activeRuns.set(runId, { runId, status: "running", mode: dryRun ? "plan" : "run" });
     void runForge(options)
-      .then(() => activeRuns.set(runId, { runId, status: "done" }))
+      .then(() => activeRuns.set(runId, { runId, status: dryRun ? "planned" : "done", mode: dryRun ? "plan" : "run" }))
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        activeRuns.set(runId, { runId, status: "error", error: message });
+        activeRuns.set(runId, { runId, status: "error", mode: dryRun ? "plan" : "run", error: message });
         broadcast(runId, { ts: new Date().toISOString(), runId, type: "run_error", message });
       });
 
@@ -225,12 +226,14 @@ function calculateProgress(plan: Plan | null, audit: ReturnType<typeof readAudit
   const current = nodes.find((node) => node.id === currentNodeId);
   const total = nodes.length || 6;
   const done = completed.size;
+  const planOnly = active?.mode === "plan" || (Boolean(plan) && done === 0 && started.length === 0);
   return {
     total,
     done,
     percent: Math.round((done / total) * 100),
     currentPhase: current?.phase,
     currentNodeId,
+    mode: active?.mode ?? (planOnly ? "plan" : "run"),
     status: active?.status ?? (failed.size ? "error" : done === total ? "done" : current ? "running" : plan ? "planned" : "waiting"),
   };
 }
@@ -423,6 +426,12 @@ function normalizeOptional(value?: string): string | undefined {
   return normalized;
 }
 
+function normalizePlanningModel(value?: string): string | undefined {
+  const normalized = normalizeOptional(value);
+  if (normalized === "codex") return undefined;
+  return normalized;
+}
+
 async function readJsonBody<T>(req: http.IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -466,6 +475,7 @@ const DASHBOARD_HTML = `<!doctype html>
           <label>Planning<select id="model"><option value="auto">auto</option></select></label>
           <label>Impl<select id="coder"><option value="auto">auto</option></select></label>
         </div>
+        <div class="hint">Planning uses the terminal-safe router. Use Codex for implementation.</div>
         <label>Context<select id="contextBudget"><option>standard</option><option>low</option><option>deep</option></select></label>
         <div class="actions">
           <button type="button" id="plan-btn">Plan</button>
@@ -556,6 +566,7 @@ h2 { font-size: 20px; font-weight: 650; margin-top: 4px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
 .large { min-height: 420px; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #111315; color: var(--text); padding: 9px 10px; outline: none; }
 textarea { resize: vertical; min-height: 128px; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
@@ -620,13 +631,18 @@ async function api(path, opts) {
 
 async function loadModels() {
   const { models } = await api("/api/models");
-  for (const select of [$("model"), $("coder")]) {
-    for (const model of models) {
+  const planningModels = models.filter((model) => model.cli !== "codex");
+  for (const model of planningModels) {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.id;
+    $("model").appendChild(option);
+  }
+  for (const model of models) {
       const option = document.createElement("option");
       option.value = model.id;
       option.textContent = model.id;
-      select.appendChild(option);
-    }
+      $("coder").appendChild(option);
   }
 }
 
@@ -668,7 +684,7 @@ function render() {
   const snap = state.snapshot;
   $("run-id").textContent = state.selectedRunId || "No run selected";
   $("run-title").textContent = snap?.plan?.prompt || "Start or select a run";
-  $("run-status").textContent = snap?.active?.status || inferStatus(snap);
+  $("run-status").textContent = snap?.progress?.status || snap?.active?.status || inferStatus(snap);
   renderProgress(snap);
   renderPhases(snap);
   renderOutput(snap);
@@ -679,7 +695,7 @@ function render() {
 
 function renderProgress(snap) {
   const progress = snap?.progress || { done: 0, total: 6, percent: 0 };
-  const label = progress.currentPhase ? progress.currentPhase + " · " : "";
+  const label = progress.currentPhase ? progress.currentPhase + " · " : progress.mode === "plan" ? "plan ready · " : "";
   $("progress-label").textContent = label + progress.done + "/" + progress.total + " phases";
   $("progress-fill").style.width = Math.max(0, Math.min(100, progress.percent || 0)) + "%";
 }
