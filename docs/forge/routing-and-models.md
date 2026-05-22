@@ -49,7 +49,9 @@ The router checks `complexity` and `ambiguityScore` from the classifier output a
 
 When a phase node exits non-zero, the runner retries one rung up the ladder for development, QA, and infra. Planning phases do not escalate automatically to avoid runaway cost on truly-stuck plans.
 
-Codex is a sibling development tier, so Forge does not escalate into Codex; it only falls back out of Codex when a Codex-routed dev phase fails.
+Rate/session-limit failures use a separate fallback ladder. Claude limits switch to Codex first when the Codex CLI is available, then try the remaining Claude models. Codex limits switch back to Claude. For no-tool phases such as classification or plain chat, Forge can use API-key auth as the final fallback: `OPENAI_API_KEY` for OpenAI Responses API and `ANTHROPIC_API_KEY` for Anthropic Messages API. Tool-enabled phases keep using local CLIs because direct APIs cannot edit files or run tests by themselves.
+
+Codex is a sibling development tier, so Forge does not escalate into Codex on ordinary failures; it only switches into Codex for rate-limit fallback or when explicitly routed there.
 
 ## How to add a model
 

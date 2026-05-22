@@ -60,10 +60,27 @@ export function isCapacityOrContextFailure(res: CliResult): boolean {
     "conversation is too long",
     "session limit",
     "session has expired",
+    "temporarily capped",
+    "resets",
     "ran out of tokens",
     "exceeded your current quota",
     "exceeded the model",
   ].some((pattern) => text.includes(pattern));
+}
+
+export function rateLimitFallbacks(currentModel: string): string[] {
+  switch (currentModel) {
+    case "haiku":
+      return ["codex", "sonnet", "opus"];
+    case "sonnet":
+      return ["codex", "opus", "haiku"];
+    case "opus":
+      return ["codex", "sonnet", "haiku"];
+    case "codex":
+      return ["sonnet", "opus", "haiku"];
+    default:
+      return ["sonnet", "codex", "opus", "haiku"];
+  }
 }
 
 export function annotateRouting(nodes: PlanNode[], c: Classification, override?: string): PlanNode[] {

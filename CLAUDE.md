@@ -23,3 +23,5 @@ Forge should be treated as chat-first. `forge` and `forge chat` open the harness
 Use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug true` when debugging Forge. Keep default errors user-friendly with recovery guidance.
 
 Use `/new` as the guided agentic SDLC team journey in chat. It runs BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. Human approval gates are required after BA, architecture synthesis, QA, and infra unless explicitly disabled with `--no-approval-gates` for local experiments. Step mode pauses before each agent phase so the user can add guidance, skip, or abort. Use `forge work` or chat `/work` to iterate on an existing target project, defaulting to `./forge-out`, without recreating it.
+
+Forge treats rate and local session limits as fallback signals. It should switch across available local CLIs before aborting, and only use API-key fallback for no-tool phases when `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is available. Phases that need file or shell tools must remain on local CLIs.

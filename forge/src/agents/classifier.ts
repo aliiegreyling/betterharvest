@@ -2,6 +2,7 @@ import { appendAudit } from "../run/state.js";
 import type { Classification, RunContext } from "../types.js";
 import { runCli } from "./cli-runner.js";
 import { crossProviderFallback, isCapacityOrContextFailure } from "./router.js";
+import { apiFallbackAvailable, runApiFallback } from "../api/fallback.js";
 
 const INSTRUCTION = `You are a project classifier. Read the user's project prompt and output ONLY a JSON object on stdout matching this exact schema, with no prose, no markdown:
 {
@@ -47,6 +48,32 @@ export async function classify(prompt: string, ctx: RunContext): Promise<Classif
     tokensOut: res.tokensOut,
     ok: res.ok,
   });
+
+  const apiModel = [modelId, "haiku", "codex", "sonnet", "opus"].find((candidate) => apiFallbackAvailable(candidate));
+  if (!res.ok && apiModel) {
+    appendAudit(ctx.runId, {
+      kind: "info",
+      agent: "classifier",
+      modelId: apiModel,
+      message: `classifier falling back to API key model ${apiModel}`,
+    });
+    res = await runApiFallback({
+      modelId: apiModel,
+      prompt: fullPrompt,
+      timeoutMs: 90_000,
+    });
+    appendAudit(ctx.runId, {
+      kind: "cli_call",
+      agent: "classifier",
+      modelId: apiModel,
+      durationMs: res.durationMs,
+      exitCode: res.exitCode,
+      tokensIn: res.tokensIn,
+      tokensOut: res.tokensOut,
+      ok: res.ok,
+      message: "api-key fallback",
+    });
+  }
 
   if (!res.ok) {
     throw new Error(

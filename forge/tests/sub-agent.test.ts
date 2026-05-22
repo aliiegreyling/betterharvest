@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isTransientFailure, backoffDelay } from "../src/agents/sub-agent.js";
+import { isRateLimitFailure, isTransientFailure, backoffDelay } from "../src/agents/sub-agent.js";
 
 describe("isTransientFailure", () => {
   it("returns false on exit 0", () => {
@@ -9,6 +9,11 @@ describe("isTransientFailure", () => {
   it("detects rate limits", () => {
     expect(isTransientFailure({ exitCode: 1, stderr: "HTTP 429 rate limit exceeded", finalText: "" })).toBe(true);
     expect(isTransientFailure({ exitCode: 1, stderr: "too many requests", finalText: "" })).toBe(true);
+  });
+
+  it("detects local session limits as rate limits", () => {
+    expect(isRateLimitFailure({ exitCode: 1, stderr: "", finalText: "You've hit your session limit · resets 5:40pm" })).toBe(true);
+    expect(isRateLimitFailure({ exitCode: 1, stderr: "insufficient_quota", finalText: "" })).toBe(true);
   });
 
   it("detects upstream 5xx", () => {

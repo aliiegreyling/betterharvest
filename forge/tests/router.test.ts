@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickModel, escalate, annotateRouting } from "../src/agents/router.js";
+import { pickModel, escalate, rateLimitFallbacks, annotateRouting } from "../src/agents/router.js";
 import type { Classification, PlanNode } from "../src/types.js";
 
 const baseClass: Classification = {
@@ -54,6 +54,18 @@ describe("escalate", () => {
 
   it("returns null for unknown models", () => {
     expect(escalate("totally-fake-model")).toBeNull();
+  });
+});
+
+describe("rateLimitFallbacks", () => {
+  it("switches Claude models to Codex first", () => {
+    expect(rateLimitFallbacks("sonnet")[0]).toBe("codex");
+    expect(rateLimitFallbacks("opus")[0]).toBe("codex");
+    expect(rateLimitFallbacks("haiku")[0]).toBe("codex");
+  });
+
+  it("switches Codex back to Claude", () => {
+    expect(rateLimitFallbacks("codex")).toEqual(["sonnet", "opus", "haiku"]);
   });
 });
 

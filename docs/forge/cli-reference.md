@@ -165,4 +165,9 @@ Aggregate cost per model for a run, from CLI-reported usage. Codex CLI typically
 | Var | Purpose |
 | --- | --- |
 | `FORGE_HOME` | Override `~/.forge/` run state root |
-| (others) | None — auth lives in the `claude` and `codex` CLIs |
+| `OPENAI_API_KEY` | Final API-key fallback for no-tool OpenAI/Codex-style model calls after CLI fallbacks are exhausted |
+| `OPENAI_MODEL` | Optional OpenAI API fallback model override; defaults to `gpt-5.2` |
+| `ANTHROPIC_API_KEY` | Final API-key fallback for no-tool Claude model calls after CLI fallbacks are exhausted |
+| `ANTHROPIC_HAIKU_MODEL` | Optional Anthropic API fallback model override for Haiku; defaults to `claude-haiku-4-5-20251001` |
+| `ANTHROPIC_SONNET_MODEL` | Optional Anthropic API fallback model override for Sonnet; defaults to `claude-sonnet-4-6` |
+| `ANTHROPIC_OPUS_MODEL` | Optional Anthropic API fallback model override for Opus; defaults to `claude-opus-4-7` |

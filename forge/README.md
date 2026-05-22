@@ -141,7 +141,7 @@ Use the `Role Guides` upload controls to attach markdown prompt files to BA or Q
 
 Planning defaults to the terminal-safe router. Codex can still be selected for planning by enabling `Allow Codex planning`; otherwise Codex is best used as the implementation model. Long-running phases stream and persist CLI output into the run log so the implementation phase does not look idle while Codex is working.
 
-If a model CLI hits a capacity, quota, session-token, or context-window limit, Forge automatically retries that step on the other provider. Codex falls back to Claude Sonnet or Opus depending on the phase; Claude falls back to Codex. The fallback is recorded in the live output and audit log.
+If a model CLI hits a capacity, quota, session-token, or context-window limit, Forge automatically retries that step on the other provider. Codex falls back to Claude Sonnet or Opus depending on the phase; Claude falls back to Codex. For no-tool phases, Forge can use API-key fallback as the final step: set `OPENAI_API_KEY` for OpenAI Responses API or `ANTHROPIC_API_KEY` for Anthropic Messages API. Tool-enabled phases keep using local CLIs because they need file and shell access. Fallbacks are recorded in the live output and audit log.
 
 Runs can be deleted from the dashboard run list. Deleting a run removes its `~/.forge/runs/<id>/` metadata and checkpoints, and also removes that run's generated project folder when it is safely inside `forge/forge-out/`.
 

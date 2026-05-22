@@ -42,6 +42,8 @@ For Forge debugging, use `FORGE_DEBUG=1`, `forge --verbose ...`, or `/set debug 
 
 Chat `/new` is the default agentic SDLC team journey. It runs BA requirements, technical architecture, UI/UX design, architecture synthesis, stories, development, QA/testing, local infrastructure, and review. Human approval gates are required after BA, architecture synthesis, QA, and infra unless explicitly disabled for local experiments with `--no-approval-gates`. Step mode still pauses before each agent phase for user guidance, `/skip`, or `/abort`. Use `forge work` or chat `/work` to iterate on an existing target project, defaulting to `./forge-out`, without recreating it.
 
+Forge model routing should recover from provider/session pressure before aborting a run. Rate or session-limit failures switch across available local CLIs first, including Claude-to-Codex and Codex-to-Claude fallback. No-tool phases may use API-key fallback as the final step via `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; tool-enabled phases must keep using local CLIs for file and shell access.
+
 ## Engineering Standards
 
 Treat this as a .NET and TypeScript product workspace unless future planning chooses otherwise. Favor clean, scalable development and pragmatic platform choices across Azure, Resend, Descope, Neon, and related integration services.
