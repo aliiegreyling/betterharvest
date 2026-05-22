@@ -113,6 +113,10 @@ GUI controls intentionally mirror terminal concepts:
 
 The dashboard also includes a phase progress meter and app preview. `Start preview` detects the selected run's target directory, looks for `package.json`, runs the first available `dev`, `start`, or `preview` script, and embeds the local URL in the preview frame.
 
+Codex planning is available as an explicit opt-in in the GUI through `Allow Codex planning`. Without that option, selecting Codex for implementation keeps planning on the default terminal-safe route. Forge also persists `cli_output` audit events for model stdout, so long phases can be inspected after refresh.
+
+Each run in the GUI run list has a delete control. It deletes only Forge run metadata under `~/.forge/runs/<id>/`; it does not remove the generated target directory.
+
 #### `forge runs`
 List up to 20 most recent runs with prompt snippet.
 

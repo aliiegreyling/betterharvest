@@ -6,7 +6,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import { MODELS } from "../models/registry.js";
 import { runForge, RunOptions } from "../runner.js";
-import { listCheckpoints, listRuns, loadCheckpoint, newRunId, readAudit, readPlan } from "../run/state.js";
+import { deleteRun, listCheckpoints, listRuns, loadCheckpoint, newRunId, readAudit, readPlan } from "../run/state.js";
 import { ContextBudget, Plan } from "../types.js";
 import { ForgeRunEvent } from "../runtime/events.js";
 
@@ -21,6 +21,7 @@ interface StartRunBody {
   contextBudget?: ContextBudget;
   model?: string;
   coder?: string;
+  allowCodexPlanning?: boolean;
   bmad?: boolean;
   dryRun?: boolean;
 }
@@ -112,6 +113,14 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
     sendJson(res, 200, readRunSnapshot(decodeURIComponent(runMatch[1])));
     return;
   }
+  if (method === "DELETE" && runMatch) {
+    const runId = decodeURIComponent(runMatch[1]);
+    stopPreview(runId);
+    activeRuns.delete(runId);
+    closeRunStreams(runId);
+    sendJson(res, 200, { deleted: deleteRun(runId), runId });
+    return;
+  }
 
   const previewMatch = pathname.match(/^\/api\/runs\/([^/]+)\/preview$/);
   if (previewMatch) {
@@ -149,7 +158,7 @@ async function route(req: http.IncomingMessage, res: ServerResponse): Promise<vo
       targetDir,
       dryRun,
       coder: normalizeOptional(body.coder),
-      modelOverride: normalizePlanningModel(body.model),
+      modelOverride: normalizePlanningModel(body.model, Boolean(body.allowCodexPlanning)),
       contextBudget: body.contextBudget ?? "standard",
       bmadOutput: Boolean(body.bmad),
       onEvent: (event) => broadcast(runId, event),
@@ -413,11 +422,24 @@ function openRunStream(runId: string, res: ServerResponse): void {
   });
 }
 
+function closeRunStreams(runId: string): void {
+  const set = clients.get(runId);
+  if (!set) return;
+  for (const res of set) res.end();
+  clients.delete(runId);
+}
+
 function broadcast(runId: string, event: ForgeRunEvent): void {
   const set = clients.get(runId);
   if (!set) return;
   const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   for (const res of set) res.write(payload);
+}
+
+function stopPreview(runId: string): void {
+  const preview = previews.get(runId);
+  preview?.process?.kill("SIGTERM");
+  previews.delete(runId);
 }
 
 function normalizeOptional(value?: string): string | undefined {
@@ -426,9 +448,9 @@ function normalizeOptional(value?: string): string | undefined {
   return normalized;
 }
 
-function normalizePlanningModel(value?: string): string | undefined {
+function normalizePlanningModel(value?: string, allowCodexPlanning = false): string | undefined {
   const normalized = normalizeOptional(value);
-  if (normalized === "codex") return undefined;
+  if (normalized === "codex" && !allowCodexPlanning) return undefined;
   return normalized;
 }
 
@@ -475,7 +497,8 @@ const DASHBOARD_HTML = `<!doctype html>
           <label>Planning<select id="model"><option value="auto">auto</option></select></label>
           <label>Impl<select id="coder"><option value="auto">auto</option></select></label>
         </div>
-        <div class="hint">Planning uses the terminal-safe router. Use Codex for implementation.</div>
+        <label class="checkline"><input id="allowCodexPlanning" type="checkbox"> Allow Codex planning</label>
+        <div class="hint">Default: terminal-safe router for planning, Codex for implementation. Enable Codex planning only when you want to test all-Codex phases.</div>
         <label>Context<select id="contextBudget"><option>standard</option><option>low</option><option>deep</option></select></label>
         <div class="actions">
           <button type="button" id="plan-btn">Plan</button>
@@ -566,6 +589,8 @@ h2 { font-size: 20px; font-weight: 650; margin-top: 4px; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
 .large { min-height: 420px; }
 label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.checkline { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.checkline input { width: auto; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
 input, select, textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #111315; color: var(--text); padding: 9px 10px; outline: none; }
 textarea { resize: vertical; min-height: 128px; }
@@ -597,6 +622,9 @@ button[type="submit"] { background: #234438; border-color: #366653; }
 .stack, .file-list, .run-list { display: grid; gap: 8px; }
 .item { border: 1px solid var(--line); border-radius: 6px; padding: 9px; background: #131517; cursor: pointer; }
 .item:hover { border-color: var(--accent); }
+.run-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: stretch; }
+.run-select { text-align: left; }
+.delete-run { color: var(--bad); min-width: 40px; padding: 8px; }
 .item-title { font-weight: 650; overflow-wrap: anywhere; }
 .item-meta { color: var(--muted); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
 .file-list { max-height: 320px; overflow: auto; }
@@ -631,18 +659,17 @@ async function api(path, opts) {
 
 async function loadModels() {
   const { models } = await api("/api/models");
-  const planningModels = models.filter((model) => model.cli !== "codex");
-  for (const model of planningModels) {
+  for (const model of models) {
     const option = document.createElement("option");
     option.value = model.id;
     option.textContent = model.id;
     $("model").appendChild(option);
   }
   for (const model of models) {
-      const option = document.createElement("option");
-      option.value = model.id;
-      option.textContent = model.id;
-      $("coder").appendChild(option);
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.id;
+    $("coder").appendChild(option);
   }
 }
 
@@ -651,13 +678,37 @@ async function loadRuns() {
   const box = $("runs");
   box.innerHTML = "";
   for (const run of runs) {
+    const row = document.createElement("div");
+    row.className = "run-item";
     const item = document.createElement("button");
-    item.className = "item";
+    item.className = "item run-select";
     item.type = "button";
     item.innerHTML = '<div class="item-title">' + escapeHtml(run.prompt || run.runId) + '</div><div class="item-meta">' + escapeHtml(run.runId) + '</div>';
     item.onclick = () => selectRun(run.runId);
-    box.appendChild(item);
+    const del = document.createElement("button");
+    del.className = "delete-run";
+    del.type = "button";
+    del.title = "Delete run";
+    del.textContent = "Del";
+    del.onclick = async () => deleteRun(run.runId);
+    row.appendChild(item);
+    row.appendChild(del);
+    box.appendChild(row);
   }
+}
+
+async function deleteRun(runId) {
+  if (!confirm("Delete run " + runId + "?")) return;
+  await api("/api/runs/" + encodeURIComponent(runId), { method: "DELETE" });
+  if (state.selectedRunId === runId) {
+    state.selectedRunId = null;
+    state.snapshot = null;
+    state.events = [];
+    if (state.stream) state.stream.close();
+    state.stream = null;
+    clearDashboard();
+  }
+  await loadRuns();
 }
 
 async function selectRun(runId) {
@@ -693,6 +744,24 @@ function render() {
   renderPreview(snap);
 }
 
+function clearDashboard() {
+  $("run-id").textContent = "No run selected";
+  $("run-title").textContent = "Start or select a run";
+  $("run-status").textContent = "idle";
+  $("progress-label").textContent = "0/6 phases";
+  $("progress-fill").style.width = "0%";
+  $("phases").innerHTML = "";
+  $("output").textContent = "";
+  $("checkpoints").innerHTML = '<div class="item-meta">No checkpoints yet</div>';
+  $("files").innerHTML = '<div class="item-meta">No generated files found yet</div>';
+  $("preview-status").textContent = "No preview running";
+  $("preview-log").textContent = "";
+  $("preview-link").removeAttribute("href");
+  $("preview-link").textContent = "";
+  $("preview-frame").removeAttribute("src");
+  $("preview-btn").disabled = true;
+}
+
 function renderProgress(snap) {
   const progress = snap?.progress || { done: 0, total: 6, percent: 0 };
   const label = progress.currentPhase ? progress.currentPhase + " · " : progress.mode === "plan" ? "plan ready · " : "";
@@ -715,7 +784,9 @@ function renderPhases(snap) {
 function renderOutput(snap) {
   const auditLines = (snap?.audit || []).map((e) => {
     const label = [e.kind, e.nodeId, e.modelId].filter(Boolean).join(" ");
-    return "[" + e.ts + "] " + label + (e.message ? "\\n" + e.message : "");
+    const dur = e.durationMs ? " · " + (e.durationMs / 1000).toFixed(1) + "s" : "";
+    const cost = e.costUsd ? " · $" + e.costUsd.toFixed(4) : "";
+    return "[" + e.ts + "] " + label + dur + cost + (e.message ? "\\n" + e.message : "");
   });
   const liveLines = state.events.filter((e) => e.type === "cli_output").map((e) => e.line);
   $("output").textContent = [...auditLines, ...liveLines].join("\\n");
@@ -762,6 +833,7 @@ function bodyFromForm(dryRun) {
     targetDir: $("targetDir").value,
     model: $("model").value,
     coder: $("coder").value,
+    allowCodexPlanning: $("allowCodexPlanning").checked,
     contextBudget: $("contextBudget").value,
     dryRun,
   };

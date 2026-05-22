@@ -115,6 +115,10 @@ The GUI is a local dashboard over Forge runs. It follows the same pipeline princ
 
 The dashboard shows phase progress, active-phase loading state, checkpoints, generated files, and a preview pane. For generated web apps, `Start preview` detects `package.json`, runs the app's `dev`, `start`, or `preview` script, and loads the local app URL in an iframe so framework hot reload can show changes while Forge is building.
 
+Planning defaults to the terminal-safe router. Codex can still be selected for planning by enabling `Allow Codex planning`; otherwise Codex is best used as the implementation model. Long-running phases stream and persist CLI output into the run log so the implementation phase does not look idle while Codex is working.
+
+Runs can be deleted from the dashboard run list. Deleting a run removes its `~/.forge/runs/<id>/` metadata and checkpoints; generated project directories are left alone.
+
 Useful routing flags:
 
 ```bash

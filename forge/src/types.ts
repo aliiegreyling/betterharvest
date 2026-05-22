@@ -102,7 +102,7 @@ export interface AuditEvent {
   agent?: string;
   modelId?: string;
   cli?: CliKind;
-  kind: "cli_call" | "phase_start" | "phase_end" | "error" | "info";
+  kind: "cli_call" | "phase_start" | "phase_end" | "cli_output" | "error" | "info";
   durationMs?: number;
   exitCode?: number;
   costUsd?: number;

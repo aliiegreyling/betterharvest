@@ -138,7 +138,7 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
     }
 
     console.log(chalk.cyan(`\n[${ph.idx}/7] ${ph.name} (model ${node.modelId})`));
-    appendAudit(runId, { kind: "phase_start", nodeId: node.id, modelId: node.modelId });
+    appendAudit(runId, { kind: "phase_start", nodeId: node.id, modelId: node.modelId, message: `${ph.name} started with ${node.modelId}` });
     emit(createRunEvent(runId, "phase_start", {
       nodeId: node.id,
       phase: ph.phase,
@@ -147,12 +147,15 @@ export async function runForge(opts: RunOptions): Promise<{ runId: string; plan:
       node,
     }));
     const r = await ph.fn(ctx, plan);
+    const phaseSummary = `${ph.name} ${r.ok ? "completed" : "failed"} in ${(r.durationMs / 1000).toFixed(1)}s using ${r.modelUsed}`;
     const auditEvent = {
       kind: "phase_end",
       nodeId: node.id,
       ok: r.ok,
       costUsd: r.costUsd,
-      message: r.output.slice(0, 500),
+      durationMs: r.durationMs,
+      modelId: r.modelUsed,
+      message: `${phaseSummary}\n${r.output.slice(0, 500)}`,
     } as const;
     appendAudit(runId, auditEvent);
     emit(createRunEvent(runId, "phase_end", {

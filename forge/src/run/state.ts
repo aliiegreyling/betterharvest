@@ -77,3 +77,13 @@ export function listRuns(): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir).sort().reverse();
 }
+
+export function deleteRun(runId: string): boolean {
+  if (runId.includes("/") || runId.includes("\\") || runId === "." || runId === "..") {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+  const dir = runDir(runId);
+  if (!fs.existsSync(dir)) return false;
+  fs.rmSync(dir, { recursive: true, force: true });
+  return true;
+}

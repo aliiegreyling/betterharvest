@@ -23,8 +23,15 @@ export async function runSubAgent(
 ): Promise<SubAgentResult> {
   const composed = composePrompt(node, systemPromptExtra, userPrompt, ctx.phaseNotes?.[node.phase]);
   let modelId = node.modelId;
+  const promptChars = composed.length;
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    ctx.onEvent?.(createRunEvent(ctx.runId, "cli_output", {
+      nodeId: node.id,
+      phase: node.phase,
+      modelId,
+      line: `starting ${node.phase} with ${modelId} (${node.allowedTools.join(", ") || "no tools"}; prompt ${promptChars} chars)`,
+    }));
     const res = await runCli({
       modelId,
       prompt: composed,
@@ -34,6 +41,14 @@ export async function runSubAgent(
       onLine: (line) => {
         if (line.startsWith("{") && line.length > 500) return;
         const visibleLine = line.slice(0, 240);
+        appendAudit(ctx.runId, {
+          kind: "cli_output",
+          nodeId: node.id,
+          agent: node.role,
+          modelId,
+          cli: modelId === "codex" ? "codex" : "claude",
+          message: visibleLine,
+        });
         ctx.onEvent?.(createRunEvent(ctx.runId, "cli_output", {
           nodeId: node.id,
           phase: node.phase,
