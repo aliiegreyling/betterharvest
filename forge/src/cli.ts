@@ -358,10 +358,28 @@ async function doctor(verbose = false) {
   }
 }
 
+installGlobalCrashHandlers();
+
 program.parseAsync(process.argv).catch((error: unknown) => {
   printUserError(error, { command: "startup", verbose: currentVerbose() });
   process.exit(1);
 });
+
+function installGlobalCrashHandlers(): void {
+  let crashing = false;
+  const handle = (kind: "unhandledRejection" | "uncaughtException", error: unknown) => {
+    if (crashing) return;
+    crashing = true;
+    try {
+      printUserError(error, { command: kind, verbose: currentVerbose() });
+    } catch {
+      console.error(`Forge ${kind} (and reporter failed):`, error);
+    }
+    process.exit(1);
+  };
+  process.on("unhandledRejection", (reason) => handle("unhandledRejection", reason));
+  process.on("uncaughtException", (err) => handle("uncaughtException", err));
+}
 
 function validateModel(model?: string): void {
   if (!model) return;

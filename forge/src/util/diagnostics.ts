@@ -15,11 +15,23 @@ export interface ErrorPrintOptions {
 export function verboseEnabled(explicit = false): boolean {
   if (explicit) return true;
   const value = process.env.FORGE_DEBUG ?? process.env.DEBUG;
-  return value === "1" || value === "true" || value === "forge" || value === "forge:*";
+  if (!value) return false;
+  return value === "1" || value === "true" || value === "forge" || value === "forge:*" || value === "*"
+    || value.includes(",") || /^[a-zA-Z][\w-]*$/.test(value);
+}
+
+export function debugScopesAllowed(scope: string, explicit = false): boolean {
+  if (explicit) return true;
+  const value = process.env.FORGE_DEBUG ?? process.env.DEBUG;
+  if (!value) return false;
+  if (value === "1" || value === "true" || value === "forge" || value === "forge:*" || value === "*") return true;
+  const scopes = value.split(",").map((s) => s.trim()).filter(Boolean);
+  if (scopes.length === 0) return false;
+  return scopes.includes(scope) || scopes.includes("*");
 }
 
 export function debugLog(scope: string, message: string, data?: unknown, verbose = false): void {
-  if (!verboseEnabled(verbose)) return;
+  if (!debugScopesAllowed(scope, verbose)) return;
   const suffix = data === undefined ? "" : ` ${safeJson(data)}`;
   console.error(chalk.dim(`[debug:${scope}] ${message}${suffix}`));
 }
@@ -40,7 +52,7 @@ export function printUserError(error: unknown, opts: ErrorPrintOptions = {}): vo
     console.error(chalk.dim("Debug details:"));
     console.error(chalk.dim(report.debug));
   } else {
-    console.error(chalk.dim("Run with FORGE_DEBUG=1 or use /set debug true for verbose diagnostics."));
+    console.error(chalk.dim("Run with FORGE_DEBUG=1 (or =scope1,scope2 e.g. cli-runner,router) or use /set debug true for verbose diagnostics."));
   }
 }
 

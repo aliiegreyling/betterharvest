@@ -3,8 +3,25 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { ProjectContext } from "../types.js";
 
+const CONTEXT_CACHE_TTL_MS = 10_000;
+const contextCache = new Map<string, { ctx: ProjectContext; expires: number }>();
+
+export function invalidateProjectContextCache(): void {
+  contextCache.clear();
+}
+
 export function detectProjectContext(cwd = process.cwd()): ProjectContext {
   const resolvedCwd = path.resolve(cwd);
+  const now = Date.now();
+  const cached = contextCache.get(resolvedCwd);
+  if (cached && cached.expires > now) return cached.ctx;
+
+  const ctx = detectProjectContextUncached(resolvedCwd);
+  contextCache.set(resolvedCwd, { ctx, expires: now + CONTEXT_CACHE_TTL_MS });
+  return ctx;
+}
+
+function detectProjectContextUncached(resolvedCwd: string): ProjectContext {
   const gitRoot = git(["rev-parse", "--show-toplevel"], resolvedCwd);
   const projectRoot = gitRoot ?? findUp(resolvedCwd, "_bmad") ?? resolvedCwd;
   const branch = gitRoot ? git(["branch", "--show-current"], projectRoot) : undefined;
